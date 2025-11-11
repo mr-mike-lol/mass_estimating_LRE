@@ -60,6 +60,11 @@ class StageParams:
     """
     Stores parameters for stage-level models (e.g., Kibbey, Akin).
 
+    For Akin's SSTO 1st-3rd Pass analysis, this dataclass holds
+    both mission inputs (payload, dV, etc.) and is used to
+    store calculated values (M_o, M_p, etc.) which are set to 0.0
+    or None initially.
+
     Args:
         engine (EngineParams): The engine object for this stage.
         propellant_mass_kg (float): Propellant load mass for the stage, in kg.
@@ -73,16 +78,29 @@ class StageParams:
             fairings (payload, intertank, aft). Used by `akin_mers.estimate_fairing_mass`.
             If 0, this MER is skipped. Defaults to 0.0.
     """
-    engine: EngineParams
-    propellant_mass_kg: float
-    vehicle_gross_mass_kg: float
-    vehicle_length_m: float
-    stage_inert_mass_kg: float  # Inert mass without engine
-    payload_mass_kg: float  # Everything above this stage
+    # --- Core Mission & Payload Inputs ---
+    payload_mass_kg: float
+    delta_v_ms: float = 9200.0
 
-    # Optional geometry parameters for fairings, wiring, etc.
-    vehicle_diameter_m: float = 0.0
-    total_fairing_area_m2: float = 0.0
+    # --- 1st Pass Sizing Inputs (Akin) ---
+    initial_delta: float = 0.08  # M_i / M_o guess
+    initial_twr: float = 1.3
+    num_engines: int = 6
+
+    # --- Geometry Inputs (Akin) ---
+    tank_geometry: Literal["Sphere", "Cylinder"] = "Sphere"
+    vehicle_diameter_m: float = 0.0  # Required for 'Cylinder'
+    payload_fairing_height_m: float = 7.0
+    intertank_fairing_height_m: float = 7.0
+    aft_fairing_height_m: float = 7.0
+
+    # --- Calculated/Placeholder Values ---
+    # These are calculated by the Akin model, not set as inputs.
+    engine: Optional[EngineParams] = None  # Set during analysis
+    propellant_mass_kg: float = 0.0
+    vehicle_gross_mass_kg: float = 0.0
+    vehicle_length_m: float = 0.0
+    stage_inert_mass_kg: float = 0.0  # M_i (calculated)
 
     @property
     def engine_mass_kg(self) -> float:
@@ -100,7 +118,6 @@ class StageParams:
         """Total inert mass = Dry stage mass + Engine mass."""
         # We assume engine_mass_kg will be calculated later.
         return self.stage_inert_mass_kg + self.engine_mass_kg
-
 
 @dataclass
 class SolidRocketMotorParams:

@@ -1,6 +1,7 @@
 # vehicle_definitions.py
 
-from models.common_params import EngineParams
+from models.common_params import EngineParams, StageParams
+from typing import Dict, Any, Tuple
 
 # --- Propellant Density Constants (kg/m^3) ---
 # Using values from Akin (ENAE 791), Page 4 [cite: 1233, 1234]
@@ -100,3 +101,133 @@ def get_rd120_engine() -> EngineParams:
         oxidizer_density=DENSITY_LOX,
         num_chambers=1
     )
+
+
+def get_akin_ssto_default_params_1st() -> Tuple[EngineParams, StageParams]:
+    """
+    Returns the default configuration for the SSTO 1st Pass example
+    from the "Mass Estimating Relations" PDF (Pages 3-30).
+
+    This pass uses:
+    - initial_delta = 0.08
+    - tank_geometry = "Sphere"
+
+    Returns:
+        Tuple[EngineParams, StageParams]: A tuple containing the
+        default engine and stage/mission parameters.
+    """
+
+    # Engine params from Page 3, 4, 27
+    engine = EngineParams(
+        thrust_vac_N=0.0,  # Calculated based on M_o and TWR
+        isp_vac_s=430.0,
+        chamber_pressure_Pa=6.897e6,  # 1000 psi
+        propellant_type="LOX/LH2",
+        cycle_type="SC",  # Assumed, not specified in PDF 1st pass
+        mixture_ratio=6.0,
+        expansion_ratio=30.0,
+        fuel_density=DENSITY_LH2,
+        oxidizer_density=DENSITY_LOX,
+    )
+
+    # Mission & Stage params from Page 3, 22, 27
+    stage = StageParams(
+        payload_mass_kg=5000.0,
+        delta_v_ms=9200.0,
+        initial_delta=0.08,
+        initial_twr=1.3,
+        num_engines=6,
+        tank_geometry="Sphere",  # 1st pass assumes spherical tanks
+        vehicle_diameter_m=0.0,  # Calculated from sphere radius
+        payload_fairing_height_m=7.0,
+        intertank_fairing_height_m=7.0,
+        aft_fairing_height_m=7.0
+    )
+
+    stage.engine = engine
+    return engine, stage
+
+
+def get_akin_ssto_default_params_2nd() -> Tuple[EngineParams, StageParams]:
+    """
+    Returns the configuration for the SSTO 2nd Pass example,
+    based on the results of the 1st Pass (Page 31-32).
+
+    This pass uses:
+    - initial_delta = 0.0853 (Calculated: 13052 kg / 153000 kg)
+    - tank_geometry = "Cylinder"
+    - vehicle_diameter_m = 8.56 m (Calculated: 2 * r_lh2_tank from 1st pass)
+
+    Returns:
+        Tuple[EngineParams, StageParams]: A tuple containing the
+        updated engine and stage/mission parameters.
+    """
+    engine, stage = get_akin_ssto_default_params_1st()
+
+    # Update params for 2nd Iteration (Page 31)
+    # delta = M_i(pass1) / M_o(pass1) = 13052 / 153000 = 0.0853
+    stage.initial_delta = 0.0853
+
+    # Use cylindrical tanks based on 1st pass LH2 tank radius
+    stage.tank_geometry = "Cylinder"
+    # M_i(pass1) r_lh2_tank = 4.28m. D = 2 * 4.28 = 8.56m
+    stage.vehicle_diameter_m = 8.56  # (2 * 4.28m)
+
+    return engine, stage
+
+
+def get_akin_ssto_default_params_3rd() -> Tuple[EngineParams, StageParams]:
+    """
+    Returns the configuration for the SSTO 3rd Pass example,
+    based on the results of the 2nd Pass (Page 33-34).
+
+    This pass uses:
+    - initial_delta = 0.08088 (Calculated: 12716 kg / 157240 kg)
+    - tank_geometry = "Cylinder"
+    - vehicle_diameter_m = 8.56 m (Same as 2nd pass)
+
+    Returns:
+        Tuple[EngineParams, StageParams]: A tuple containing the
+        updated engine and stage/mission parameters.
+    """
+    engine, stage = get_akin_ssto_default_params_2nd()
+
+    # Update params for 3rd Iteration (Page 33)
+    # delta = M_i(pass2) / M_o(pass2) = 12716 / 157240 = 0.08088
+    stage.initial_delta = 0.08088
+
+    # Geometry remains cylindrical with the same diameter
+
+    return engine, stage
+
+
+def default_rocket_params() -> Tuple[EngineParams, StageParams]:
+    """
+    Creates a set of default parameters for a *custom* rocket analysis,
+    using the SSME as the engine and a larger payload.
+
+    This is for use in `main.py` for custom analysis runs.
+
+    Returns:
+        Tuple[EngineParams, StageParams]: A tuple containing the
+        SSME engine and a custom stage/mission.
+    """
+    # 1. Get a known, high-performance engine
+    engine = get_ssme_engine()
+
+    # 2. Define a new, custom mission
+    stage = StageParams(
+        payload_mass_kg=20000.0,  # Larger payload
+        delta_v_ms=9000.0,
+        initial_delta=0.09,  # Start with a 9% inert guess
+        initial_twr=1.25,
+        num_engines=3,  # Use 3 SSMEs
+        tank_geometry="Cylinder",  # Assume cylindrical tanks
+        vehicle_diameter_m=8.4,  # e.g., Space Shuttle ET diameter
+        payload_fairing_height_m=15.0,
+        intertank_fairing_height_m=5.0,
+        aft_fairing_height_m=10.0
+    )
+
+    stage.engine = engine
+    return engine, stage
