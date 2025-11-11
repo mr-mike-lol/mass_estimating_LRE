@@ -1,11 +1,11 @@
 # models/akin_mers.py
 
 import math
-from .common_params import EngineParams, PropellantType
-from typing import Literal, Dict
+from typing import Literal, Dict, Tuple, Any
+from vehicle_definitions import DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, G0
 
 
-def estimate_engine_mass(thrust_N: float, expansion_ratio: float) -> Dict:
+def estimate_engine_mass(thrust_N: float, expansion_ratio: float) -> float:
     """
     Estimates liquid pump-fed rocket engine mass based on thrust and expansion ratio.
     Returns a dictionary with total mass and component (term) breakdown.
@@ -30,16 +30,7 @@ def estimate_engine_mass(thrust_N: float, expansion_ratio: float) -> Dict:
 
     total_mass = term1 + term2 + term3
 
-    components = {
-        "thrust_term (7.81e-4*T)": term1,
-        "expansion_term (3.37e-5*T*sqrt(Ae/At))": term2,
-        "constant_term (59)": term3
-    }
-
-    return {
-        "total_mass_kg": total_mass,
-        "components_kg": components
-    }
+    return total_mass
 
 
 def estimate_thrust_structure_mass(total_thrust_N: float) -> float:
@@ -90,12 +81,13 @@ def estimate_propellant_tank_mass_from_mass(propellant_mass_kg: float,
                                             propellant: Literal["LH2", "LOX", "RP1"]) -> float:
     """
     Estimates propellant tank mass based on propellant mass (alternative MER).
+    This is the MER used in the SSTO example calcs.
 
     Reference:
     [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 7 [cite: 86-92].
     Formulas:
-    [cite_start]M_LH2_Tank(kg) = 0.128 * M_LH2(kg) [cite: 88]
-    [cite_start]M_LOX_Tank(kg) = 0.0107 * M_LOX(kg) [cite: 90]
+    [cite_start]M_LH2_Tank(kg) = 0.128 * M_LH2(kg) [cite: 88, 116]
+    [cite_start]M_LOX_Tank(kg) = 0.0107 * M_LOX(kg) [cite: 90, 106]
     [cite_start]M_RP1_Tank(kg) = 0.0148 * M_RP1(kg) [cite: 92]
 
     Args:
@@ -115,8 +107,8 @@ def estimate_propellant_tank_mass_from_mass(propellant_mass_kg: float,
         # [cite_start]M_RP1_Tank(kg) = 0.0148 * M_RP1(kg) [cite: 92]
         return 0.0148 * propellant_mass_kg
     else:
-        # Fallback for other types, though not specified in this MER
-        return 0.01 * propellant_mass_kg
+        # Raise error other types, though not specified in this MER
+        raise ValueError(f"Unknown propellant type for mass-based tank MER: {propellant}")
 
 
 def estimate_cryo_insulation_mass(tank_surface_area_m2: float, propellant: Literal["LH2", "LOX"]) -> float:
@@ -126,8 +118,8 @@ def estimate_cryo_insulation_mass(tank_surface_area_m2: float, propellant: Liter
     Reference:
     [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 8 [cite: 96-100].
     Formulas:
-    [cite_start]M_LH2_Insulation(kg) = 2.88 * A_tank(m^2) [cite: 97, 100]
-    [cite_start]M_LOX_Insulation(kg) = 1.123 * A_tank(m^2) [cite: 99, 100]
+    [cite_start]M_LH2_Insulation(kg) = 2.88 * A_tank(m^2) [cite: 97, 100, 120]
+    [cite_start]M_LOX_Insulation(kg) = 1.123 * A_tank(m^2) [cite: 99, 100, 110]
 
     Args:
         tank_surface_area_m2 (float): Surface area of the tank in square meters.
@@ -143,7 +135,7 @@ def estimate_cryo_insulation_mass(tank_surface_area_m2: float, propellant: Liter
         # [cite_start]M_LOX_Insulation <kg> = 1.123 <kg/m^2> * A_tank [cite: 99, 100]
         return 1.123 * tank_surface_area_m2
     elif propellant == "Methane":
-        # estimated, needs double-check
+        # estimated, needs double-check; cz it's cryogenic
         return 1.0 * tank_surface_area_m2
     else:
         return 0.0  # No insulation needed for non-cryo
@@ -225,6 +217,8 @@ def estimate_fairing_mass(fairing_surface_area_m2: float) -> float:
     Returns:
         float: Estimated fairing mass in kg.
     """
+    if fairing_surface_area_m2 <= 0:
+        return 0.0
     # [cite_start]Formula from source [cite: 280]
     return 4.95 * (fairing_surface_area_m2 ** 1.15)
 
@@ -262,6 +256,8 @@ def estimate_wiring_mass(vehicle_gross_mass_kg: float, vehicle_length_m: float) 
     Returns:
         float: Estimated wiring mass in kg.
     """
+    if vehicle_gross_mass_kg <= 0 or vehicle_length_m <= 0:
+        return 0.0
     # [cite_start]Formula from source [cite: 285]
     return 1.058 * (vehicle_gross_mass_kg ** 0.5) * (vehicle_length_m ** 0.25)
 
@@ -291,12 +287,6 @@ def estimate_gimbal_mass(engine_thrust_N: float, chamber_pressure_Pa: float) -> 
     Reference:
     [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 26 [cite: 368-369].
     [cite_start]Formula: M_Gimbals(kg) = 237.8 * [T(N) / P_c(Pa)]^0.9375 [cite: 369]
-
-    [cite_start]Note: The reference slide [cite: 369] uses P_0(Pa), but the example calculation
-    on [cite_start]page 28 [cite: 391] (using Pc=6.897e6 Pa) and mass summary on [cite_start]page 30 [cite: 406]
-    (Total Gimbals = 81 kg for 6 engines) confirm this refers to
-    chamber pressure (P_c) and that the mass is per engine.
-    (6 engines * 13.5 kg/eng ~= 81 kg total).
 
     Args:
         engine_thrust_N (float): Thrust of a single engine in Newtons.
@@ -338,9 +328,13 @@ def estimate_gimbal_torque(engine_thrust_N: float, chamber_pressure_Pa: float) -
     return 990_000 * (ratio ** 1.25)
 
 
-def calculate_sphere_area(propellant_mass: float, propellant_density: float):
+# --- Geometry Helper Functions ---
+# These functions implement the geometry formulas used in the SSTO example
+# and can be used for the "optional" fairing calculations.
+
+def _calculate_sphere_geom(propellant_mass: float, propellant_density: float) -> Tuple[float, float]:
     """
-    Calculate the estimated area of the tank surface based on propellant mass and density.
+    (Internal) Calculates the radius and surface area of a spherical tank.
     This is a helper function based on the logic from the article.
 
     Reference:
@@ -354,16 +348,26 @@ def calculate_sphere_area(propellant_mass: float, propellant_density: float):
         propellant_density (float): Density of the propellant in kg/m^3.
 
     Returns:
-        float: Estimated spherical surface area in m^2.
+        Tuple[float, float]: (radius_m, area_m2)
     """
-    if propellant_density == 0:
-        return 0.0
+    if propellant_density == 0 or propellant_mass == 0:
+        return 0.0, 0.0
     # [cite_start]V = M / rho [cite: 107, 117]
     volume = propellant_mass / propellant_density
     # [cite_start]r = (V / (4pi/3))^(1/3) [cite: 108, 118]
     sphere_radius = (volume / (4 * math.pi / 3)) ** (1 / 3)
     # [cite_start]A = 4 * pi * r^2 [cite: 109, 119]
-    return 4 * math.pi * (sphere_radius ** 2)
+    area = 4 * math.pi * (sphere_radius ** 2)
+    return sphere_radius, area
+
+
+def calculate_sphere_area(propellant_mass: float, propellant_density: float) -> float:
+    """
+    Public helper to calculate just the surface area of a spherical tank.
+    See _calculate_sphere_geom for details.
+    """
+    _, area = _calculate_sphere_geom(propellant_mass, propellant_density)
+    return area
 
 
 def calculate_cone_area(radius: float, height: float) -> float:
@@ -372,7 +376,7 @@ def calculate_cone_area(radius: float, height: float) -> float:
     A = pi * r * sqrt(r^2 + h^2)
 
     Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 290].
+    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 290].
 
     Args:
         radius (float): Base radius of the cone (r).
@@ -381,7 +385,10 @@ def calculate_cone_area(radius: float, height: float) -> float:
     Returns:
         float: Surface area in m^2.
     """
-    return math.pi * radius * math.sqrt(radius**2 + height**2)
+    if radius <= 0 or height <= 0:
+        return 0.0
+    return math.pi * radius * math.sqrt(radius ** 2 + height ** 2)
+
 
 def calculate_cylinder_area(radius: float, height: float) -> float:
     """
@@ -389,7 +396,7 @@ def calculate_cylinder_area(radius: float, height: float) -> float:
     A = 2 * pi * r * h
 
     Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 295].
+    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 295].
 
     Args:
         radius (float): Radius of the cylinder (r).
@@ -398,7 +405,10 @@ def calculate_cylinder_area(radius: float, height: float) -> float:
     Returns:
         float: Surface area in m^2.
     """
+    if radius <= 0 or height <= 0:
+        return 0.0
     return 2 * math.pi * radius * height
+
 
 def calculate_frustum_area(radius1: float, radius2: float, height: float) -> float:
     """
@@ -406,7 +416,7 @@ def calculate_frustum_area(radius1: float, radius2: float, height: float) -> flo
     A = pi * (r1 + r2) * sqrt((r1 - r2)^2 + h^2)
 
     Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 292].
+    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 292].
 
     Args:
         radius1 (float): Radius of the first base (r1).
@@ -416,4 +426,259 @@ def calculate_frustum_area(radius1: float, radius2: float, height: float) -> flo
     Returns:
         float: Surface area in m^2.
     """
-    return math.pi * (radius1 + radius2) * math.sqrt((radius1 - radius2)**2 + height**2)
+    if height <= 0:
+        return 0.0
+    return math.pi * (radius1 + radius2) * math.sqrt((radius1 - radius2) ** 2 + height ** 2)
+
+
+# --- New Example Runner Function ---
+
+def get_akin_ssto_default_params() -> Dict[str, Any]:
+    """
+    Returns the default configuration for the SSTO 1st Pass example
+    from the "Mass Estimating Relations" PDF.
+    """
+    return {
+        # [cite_start]Page 3 [cite: 24]
+        "payload_kg": 5000.0,
+        # [cite_start]Page 3 [cite: 23]
+        "delta_v_ms": 9200.0,
+        # [cite_start]Page 3 [cite: 26]
+        "isp_s": 430.0,
+        # [cite_start]Page 3 [cite: 28]
+        "initial_delta": 0.08,
+        # [cite_start]Page 4 [cite: 40]
+        "mixture_ratio": 6.0,
+        # [cite_start]Page 27 [cite: 375]
+        "initial_twr": 1.3,
+        # [cite_start]Page 27 [cite: 377]
+        "num_engines": 6,
+        # [cite_start]Page 27 [cite: 381]
+        "chamber_pressure_Pa": 6.897e6,  # 1000 psi
+        # [cite_start]Page 27 [cite: 383]
+        "expansion_ratio": 30.0,
+        # [cite_start]Page 22 [cite: 313]
+        "payload_fairing_height_m": 7.0,
+        # [cite_start]Page 22 [cite: 316]
+        "intertank_fairing_height_m": 7.0,
+        # [cite_start]Page 22 [cite: 319]
+        "aft_fairing_height_m": 7.0,
+    }
+
+
+def run_akin_ssto_example(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Runs the 1st Pass SSTO mass budget analysis based on the
+    "Mass Estimating Relations" (Akin, ENAE 791) PDF.
+
+    This function follows the logic from Page 3 to Page 30.
+
+    Args:
+        params (Dict[str, Any]): A dictionary of parameters,
+                                 see `get_akin_ssto_default_params` for keys.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing the detailed mass budget.
+    """
+    # Unpack parameters
+    p = params
+
+    # --- Step 1: Vehicle-Level 1st Pass (Page 3) ---
+    # [cite_start]Page 3 [cite: 27]
+    Ve = p['isp_s'] * G0
+    # [cite_start]Page 3 [cite: 31]
+    r = math.exp(-p['delta_v_ms'] / Ve)
+    # [cite_start]Page 3 [cite: 32]
+    lambda_payload = r - p['initial_delta']
+    if lambda_payload <= 0:
+        raise ValueError("Infeasible mission: delta (inert fraction) is too high for this delta-V.")
+    # [cite_start]Page 3 [cite: 33]
+    M_o = p['payload_kg'] / lambda_payload
+    # [cite_start]Page 3 [cite: 34]
+    M_i_initial_guess = p['initial_delta'] * M_o
+    # [cite_start]Page 3 [cite: 35]
+    M_p = M_o * (1 - r)
+
+    # --- Step 2: Propellant Calcs (Page 4) ---
+    # [cite_start]Page 4 [cite: 40, 42]
+    M_lh2 = M_p / (1 + p['mixture_ratio'])
+    # [cite_start]Page 4 [cite: 40, 43]
+    M_lox = M_p * p['mixture_ratio'] / (1 + p['mixture_ratio'])
+
+    # --- Step 3: Tank Mass (Page 7, 9, 10) ---
+    # [cite_start]Page 7 [cite: 90][cite_start], Page 9 [cite: 106]
+    M_lox_tank = estimate_propellant_tank_mass_from_mass(M_lox, "LOX")
+    # [cite_start]Page 7 [cite: 88][cite_start], Page 10 [cite: 116]
+    M_lh2_tank = estimate_propellant_tank_mass_from_mass(M_lh2, "LH2")
+
+    # --- Step 4: Insulation Mass (Page 8-10) ---
+    # [cite_start]Page 9 [cite: 108][cite_start], Page 10 [cite: 118]
+    r_lox_tank, A_lox_tank = _calculate_sphere_geom(M_lox, DENSITY_LOX)
+    r_lh2_tank, A_lh2_tank = _calculate_sphere_geom(M_lh2, DENSITY_LH2)
+    # [cite_start]Page 8 [cite: 99][cite_start], Page 9 [cite: 110]
+    M_lox_insulation = estimate_cryo_insulation_mass(A_lox_tank, "LOX")
+    # [cite_start]Page 8 [cite: 97][cite_start], Page 10 [cite: 120]
+    M_lh2_insulation = estimate_cryo_insulation_mass(A_lh2_tank, "LH2")
+
+    # --- Step 5: Fairing Mass (Page 20-23) ---
+    # [cite_start]Page 21-22 [cite: 290, 313, 322]
+    A_payload_fairing = calculate_cone_area(r_lox_tank, p['payload_fairing_height_m'])
+    # [cite_start]Page 21-22 [cite: 292, 316, 322, 323]
+    A_intertank_fairing = calculate_frustum_area(r_lh2_tank, r_lox_tank, p['intertank_fairing_height_m'])
+    # [cite_start]Page 21-22 [cite: 295, 319, 323]
+    A_aft_fairing = calculate_cylinder_area(r_lh2_tank, p['aft_fairing_height_m'])
+    # [cite_start]Page 20 [cite: 280][cite_start], Page 23 [cite: 340]
+    M_payload_fairing = estimate_fairing_mass(A_payload_fairing)
+    # [cite_start]Page 20 [cite: 280][cite_start], Page 23 [cite: 342]
+    M_intertank_fairing = estimate_fairing_mass(A_intertank_fairing)
+    # [cite_start]Page 20 [cite: 280][cite_start], Page 23 [cite: 344]
+    M_aft_fairing = estimate_fairing_mass(A_aft_fairing)
+
+    # --- Step 6: Avionics & Wiring (Page 20, 24) ---
+    # [cite_start]Page 24 [cite: 353] - Approx. length based on 7+7+7 fairing sections
+    vehicle_length_l = p['payload_fairing_height_m'] + p['intertank_fairing_height_m'] + p['aft_fairing_height_m']
+    # [cite_start]Page 20 [cite: 284][cite_start], Page 24 [cite: 351]
+    M_avionics = estimate_avionics_mass(M_o)
+    # [cite_start]Page 20 [cite: 285][cite_start], Page 24 [cite: 353]
+    M_wiring = estimate_wiring_mass(M_o, vehicle_length_l)
+
+    # --- Step 7: Propulsion (Page 25-28) ---
+    # [cite_start]Page 27-28 [cite: 375, 390]
+    Total_Thrust_T = M_o * G0 * p['initial_twr']
+    T_per_engine = Total_Thrust_T / p['num_engines']
+    # [cite_start]Page 25 [cite: 358, 360][cite_start], Page 28 [cite: 392]
+    M_per_engine = estimate_engine_mass(T_per_engine, p['expansion_ratio'])
+    M_engines_total = M_per_engine * p['num_engines']
+    # [cite_start]Page 25 [cite: 363][cite_start], Page 28 [cite: 394]
+    M_thrust_structure_per_eng = estimate_thrust_structure_mass(T_per_engine)
+    M_thrust_structure_total = M_thrust_structure_per_eng * p['num_engines']
+    # [cite_start]Page 26 [cite: 369]
+    M_gimbal_per_engine = estimate_gimbal_mass(T_per_engine, p['chamber_pressure_Pa'])
+    M_gimbals_total = M_gimbal_per_engine * p['num_engines']
+
+    # --- Step 8: Mass Summary (Page 30) ---
+    components = {
+        "LOX Tank": M_lox_tank,
+        "LH2 Tank": M_lh2_tank,
+        "LOX Insulation": M_lox_insulation,
+        "LH2 Insulation": M_lh2_insulation,
+        "Payload Fairing": M_payload_fairing,
+        "Intertank Fairing": M_intertank_fairing,
+        "Aft Fairing": M_aft_fairing,
+        "Engines": M_engines_total,
+        "Thrust Structure": M_thrust_structure_total,
+        "Gimbals": M_gimbals_total,
+        "Avionics": M_avionics,
+        "Wiring": M_wiring,
+    }
+    # [cite_start]Page 30 [cite: 406]
+    M_i_calculated = sum(components.values())
+    margin = (M_i_initial_guess - M_i_calculated) / M_i_initial_guess
+
+    results = {
+        "params": p,
+        "initial_calcs": {
+            "M_o_kg": M_o,
+            "M_i_initial_guess_kg": M_i_initial_guess,
+            "M_propellant_kg": M_p,
+            "M_payload_kg": p['payload_kg'],
+            "mass_ratio_r": r,
+            "payload_fraction_lambda": lambda_payload,
+        },
+        "propulsion": {
+            "total_thrust_N": Total_Thrust_T,
+            "thrust_per_engine_N": T_per_engine,
+            "mass_per_engine_kg": M_per_engine,
+            "gimbal_mass_per_engine_kg": M_gimbal_per_engine,
+            "thrust_structure_mass_per_engine_kg": M_thrust_structure_per_eng,
+        },
+        "geometry": {
+            "lox_tank_radius_m": r_lox_tank,
+            "lox_tank_area_m2": A_lox_tank,
+            "lh2_tank_radius_m": r_lh2_tank,
+            "lh2_tank_area_m2": A_lh2_tank,
+            "vehicle_length_approx_m": vehicle_length_l,
+        },
+        "mass_budget": {
+            "components_kg": components,
+            "total_inert_mass_calculated_kg": M_i_calculated,
+            "total_inert_mass_initial_guess_kg": M_i_initial_guess,
+            "design_margin_percent": margin * 100.0,
+        }
+    }
+    return results
+
+
+def _print_ssto_results(results: Dict[str, Any]):
+    """Helper to format and print the SSTO analysis results."""
+
+    print("=" * 70)
+    print("🚀 AKIN SSTO 1st PASS ANALYSIS RESULTS")
+    print(f"(Based on ENAE 791, 1st Pass, Pages 3-30)")
+    print("=" * 70)
+
+    print("\n--- Initial Vehicle Sizing (from Page 3) ---")
+    ic = results['initial_calcs']
+    print(f"  Gross Mass (M_o):         {ic['M_o_kg']:12,.1f} kg")
+    print(f"  Propellant Mass (M_p):    {ic['M_propellant_kg']:12,.1f} kg")
+    print(f"  Initial Inert Guess (M_i):{ic['M_i_initial_guess_kg']:12,.1f} kg")
+    print(f"  Payload Mass (M_l):       {ic['M_payload_kg']:12,.1f} kg")
+
+    print("\n--- Propulsion System (from Page 27-28) ---")
+    pr = results['propulsion']
+    p = results['params']
+    print(f"  Num. Engines:             {p['num_engines']}")
+    print(f"  Total Thrust:             {pr['total_thrust_N'] / 1e6:12.2f} MN")
+    print(f"  Thrust per Engine:        {pr['thrust_per_engine_N'] / 1e3:12.1f} kN")
+    print(f"  Mass per Engine:          {pr['mass_per_engine_kg']:12.1f} kg")
+
+    print("\n--- Calculated Mass Budget (from Page 30) ---")
+    mb = results['mass_budget']
+    components = mb['components_kg']
+
+    # [cite_start]Replicating table from Page 30 [cite: 406]
+    print(f"  {'Component':<18} | {'Calculated (kg)':>15} | {'PDF Ref (kg)':>12}")
+    print(f"  {'-' * 18: <18} | {'-' * 15:>15} | {'-' * 12:>12}")
+    # Helper to map component names to PDF values
+    pdf_ref = {
+        "LOX Tank": 1245, "LH2 Tank": 2482, "LOX Insulation": 119,
+        "LH2 Insulation": 586, "Payload Fairing": 645, "Intertank Fairing": 1626,
+        "Aft Fairing": 1905, "Engines": 2236, "Thrust Structure": 497,
+        "Gimbals": 81, "Avionics": 744, "Wiring": 886
+    }
+    for name, mass in components.items():
+        ref_val_str = f"{pdf_ref.get(name, 0):,.0f}"
+        print(f"  {name:<18} | {mass:15,.1f} | {ref_val_str:>12}")
+
+    print(f"  {'-' * 18: <18} | {'-' * 15:>15} | {'-' * 12:>12}")
+    print(f"  {'Total Inert Mass':<18} | {mb['total_inert_mass_calculated_kg']:15,.1f} | {13052:>12}")
+    print(f"  {'Initial Guess':<18} | {mb['total_inert_mass_initial_guess_kg']:15,.1f} | {12240:>12}")
+
+    print("\n--- FINAL DESIGN MARGIN ---")
+    print(f"  Calculated Margin:   {mb['design_margin_percent']:15.2f} %")
+    # [cite_start]Page 30 [cite: 406]
+    print(f"  PDF Reference Margin: {-6.22:15.2f} %")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    """
+    This block allows the file to be run directly (e.g., `python models/akin_mers.py`)
+    to execute the SSTO 1st Pass analysis using the default parameters
+    from the PDF.
+    """
+
+    print("Running SSTO 1st Pass Example directly from akin_mers.py...")
+
+    # 1. Get the specific config from the PDF
+    default_params = get_akin_ssto_default_params()
+
+    # 2. Run the analysis
+    try:
+        results = run_akin_ssto_example(default_params)
+
+        # 3. Print the formatted results
+        _print_ssto_results(results)
+
+    except Exception as e:
+        print(f"\nAn error occurred during the analysis: {e}")
