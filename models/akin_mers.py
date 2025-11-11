@@ -585,13 +585,23 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
     M_aft_fairing = estimate_fairing_mass(A_aft_fairing)
 
     # --- Step 6: Avionics & Wiring (Page 20, 24) ---
+
     vehicle_length_l = 0.0
+    total_vehicle_length = 0.0
+
     if stage.tank_geometry == "Sphere":
         # Page 24 - Approx. length based on 7+7+7 fairing sections
         vehicle_length_l = stage.payload_fairing_height_m + stage.intertank_fairing_height_m + stage.aft_fairing_height_m
+        total_vehicle_length = vehicle_length_l
     else:
-        # More accurate length using calculated tank heights
+        # Per PDF, M_wiring MER (l^0.25) seems to use tank lengths
         vehicle_length_l = (
+                h_lox_tank_m +
+                h_lh2_tank_m
+        )
+
+        # Total vehicle length includes fairings and tanks
+        total_vehicle_length = (
                 stage.payload_fairing_height_m +
                 h_lox_tank_m +
                 stage.intertank_fairing_height_m +
@@ -602,6 +612,7 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
     # Page 20, Page 24
     M_avionics = estimate_avionics_mass(M_o)
     # Page 20, Page 24
+    # M_wiring uses 'vehicle_length_l' (tank lengths only for Cylinder)
     M_wiring = estimate_wiring_mass(M_o, vehicle_length_l)
 
     # --- Step 7: Propulsion (Page 25-28) ---
@@ -662,7 +673,7 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
             "lh2_tank_radius_m": r_lh2_tank_m,
             "lh2_tank_area_m2": A_lh2_tank,
             "lh2_tank_height_m": h_lh2_tank_m,
-            "vehicle_length_approx_m": vehicle_length_l,
+            "vehicle_length_approx_m": total_vehicle_length,
         },
         "mass_budget": {
             "components_kg": components,
@@ -674,12 +685,71 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
     return results
 
 
-def print_ssto_results(results: Dict[str, Any], show_pdf_ref: bool = True):
+def _get_pdf_reference_data(pass_num: int) -> Dict[str, Any]:
+    """
+    (Internal) Returns a dictionary of the reference mass budget values
+    from the Akin ENAE 791 PDF for a specific pass.
+
+    Args:
+        pass_num (int): The iteration number (1, 2, or 3).
+
+    Returns:
+        Dict[str, Any]: A dict with 'components_kg', 'total_kg',
+                        'guess_kg', and 'margin_pct'.
+    """
+    if pass_num == 1:
+        # Data from Pass 1 (Page 30)
+        # Note: These values are based on the dV=9200 (r=0.1129) run,
+        return {
+            "components_kg": {
+                "LOX Tank": 1245, "LH2 Tank": 2482, "LOX Insulation": 119,
+                "LH2 Insulation": 586, "Payload Fairing": 645, "Intertank Fairing": 1626,
+                "Aft Fairing": 1905, "Engines": 2236, "Thrust Structure": 497,
+                "Gimbals": 81, "Avionics": 744, "Wiring": 886
+            },
+            "total_kg": 13052,
+            "guess_kg": 12240,  # Based on M_o=153000
+            "margin_pct": -6.22  # (12240-13052)/12240
+        }
+    elif pass_num == 2:
+        # Data from Pass 2 (Page 32)
+        # These values are based on the dV=9200 (r=0.1129) run
+        return {
+            "components_kg": {
+                "LOX Tank": 1245, "LH2 Tank": 2482, "LOX Insulation": 56,
+                "LH2 Insulation": 145, "Payload Fairing": 402, "Intertank Fairing": 448,
+                "Aft Fairing": 579, "Engines": 2236, "Thrust Structure": 497,
+                "Gimbals": 81, "Avionics": 744, "Wiring": 1044
+            },
+            "total_kg": 9960,
+            "guess_kg": 12240,
+            "margin_pct": 22.9
+        }
+    elif pass_num == 3:
+        # Data from Pass 3 (Page 34)
+        return {
+            "components_kg": {
+                "LOX Tank": 1382, "LH2 Tank": 2755, "LOX Insulation": 62,
+                "LH2 Insulation": 160, "Payload Fairing": 427, "Intertank Fairing": 501,
+                "Aft Fairing": 626, "Engines": 2443, "Thrust Structure": 552,
+                "Gimbals": 90, "Avionics": 773, "Wiring": 1101
+            },
+            "total_kg": 10870,  # Recalculated total
+            "guess_kg": 14130,  # M_i_calc from Pass 2
+            "margin_pct": 30  # (12016-11785)/12016
+        }
+    else:
+        # Default to empty if pass_num is not 1, 2, or 3
+        return {"components_kg": {}, "total_kg": 0, "guess_kg": 0, "margin_pct": 0}
+
+
+def print_ssto_results(results: Dict[str, Any], pass_num: int = 1, show_pdf_ref: bool = True):
     """
     Helper to format and print the SSTO analysis results.
 
     Args:
         results (Dict[str, Any]): The results dictionary from run_akin_ssto_example.
+        pass_num (int): The iteration number (1, 2, or 3) for PDF ref matching.
         show_pdf_ref (bool): If True, prints the 'PDF Ref (kg)' column for comparison.
     """
 
@@ -692,10 +762,9 @@ def print_ssto_results(results: Dict[str, Any], show_pdf_ref: bool = True):
 
     # Title based on context
     if show_pdf_ref:
-        print(f"(Based on ENAE 791, Pass 1, Pages 3-30)")
+        print(f"(Based on ENAE 791, Pass {pass_num}, Pages 3-34)")
     else:
         print(f"(Custom Run: {stage.tank_geometry} Tanks, dV={stage.delta_v_ms} m/s)")
-    print(f"   (Initial Delta Guess: {stage.initial_delta * 100:.2f}%)")
     print("=" * 70)
 
     print("\n--- Initial Vehicle Sizing (from Page 3) ---")
@@ -712,35 +781,30 @@ def print_ssto_results(results: Dict[str, Any], show_pdf_ref: bool = True):
     print(f"  Thrust per Engine:        {pr['thrust_per_engine_N'] / 1e3:12.1f} kN")
     print(f"  Mass per Engine:          {pr['mass_per_engine_kg']:12.1f} kg")
 
-    print("\n--- Calculated Mass Budget (from Page 30) ---")
+    print("\n--- Calculated Mass Budget ---")
     mb = results['mass_budget']
     components = mb['components_kg']
 
     # Conditionally set headers
     header = f"  {'Component':<18} | {'Calculated (kg)':>15}"
     header_sep = f"  {'-' * 18: <18} | {'-' * 15:>15}"
+
+    pdf_data = {}
     if show_pdf_ref:
+        pdf_data = _get_pdf_reference_data(pass_num)
         header += f" | {'PDF Ref (kg)':>12}"
         header_sep += f" | {'-' * 12:>12}"
 
     print(header)
     print(header_sep)
 
-    # Replicating table from Page 30
-    pdf_ref = {}
-    if show_pdf_ref:
-        pdf_ref = {
-            "LOX Tank": 1245, "LH2 Tank": 2482, "LOX Insulation": 119,
-            "LH2 Insulation": 586, "Payload Fairing": 645, "Intertank Fairing": 1626,
-            "Aft Fairing": 1905, "Engines": 2236, "Thrust Structure": 497,
-            "Gimbals": 81, "Avionics": 744, "Wiring": 886
-        }
+    pdf_components = pdf_data.get("components_kg", {})
 
     for name, mass in components.items():
         line = f"  {name:<18} | {mass:15,.1f}"
         if show_pdf_ref:
             # We only add the PDF ref value if the flag is True
-            ref_val_str = f"{pdf_ref.get(name, 0):,.0f}"
+            ref_val_str = f"{pdf_components.get(name, 0):,.0f}"
             line += f" | {ref_val_str:>12}"
         print(line)
 
@@ -751,8 +815,8 @@ def print_ssto_results(results: Dict[str, Any], show_pdf_ref: bool = True):
     line_guess = f"  {'Initial Guess':<18} | {mb['total_inert_mass_initial_guess_kg']:15,.1f}"
 
     if show_pdf_ref:
-        line_total += f" | {13052:>12}"
-        line_guess += f" | {12240:>12}"
+        line_total += f" | {pdf_data.get('total_kg', 0):>12,.0f}"
+        line_guess += f" | {pdf_data.get('guess_kg', 0):>12,.0f}"
 
     print(line_total)
     print(line_guess)
@@ -760,8 +824,8 @@ def print_ssto_results(results: Dict[str, Any], show_pdf_ref: bool = True):
     print("\n--- FINAL DESIGN MARGIN ---")
     print(f"  Calculated Margin:   {mb['design_margin_percent']:15.2f} %")
     if show_pdf_ref:
-        # Page 30
-        print(f"  PDF Reference Margin: {-6.22:15.2f} %")
+        # Page 30, 32, 34
+        print(f"  PDF Reference Margin: {pdf_data.get('margin_pct', 0.0):15.2f} %")
     print("=" * 70)
 
 
@@ -775,14 +839,16 @@ if __name__ == "__main__":
     print("Running SSTO Pass Example directly from akin_mers.py...")
 
     # 1. Get the specific config from the PDF (now dataclasses)
-    engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_1st()
+    # Options: get_akin_ssto_default_params_1st, get_akin_ssto_default_params_2nd, get_akin_ssto_default_params_3rd
+    engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_3rd()
 
     # 2. Run the analysis
     try:
         results = run_akin_ssto_example(engine_params, stage_params)
 
         # 3. Print the formatted results
-        print_ssto_results(results, show_pdf_ref=True)
+        # Options: pass_num=1, 2, 3
+        print_ssto_results(results, pass_num = 3, show_pdf_ref=True)
 
     except Exception as e:
         print(f"\nAn error occurred during the analysis: {e}")

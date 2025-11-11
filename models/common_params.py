@@ -72,35 +72,35 @@ class StageParams:
         vehicle_length_m (float): Total length of the launch vehicle, in meters.
         stage_inert_mass_kg (float): Inert mass of the stage (excluding engine and payload), in kg.
         payload_mass_kg (float): Mass of the payload (and any upper stages), in kg.
-        vehicle_diameter_m (float, optional): Main diameter of the vehicle/stage, in meters.
-            Used for fairing and structural estimations. Defaults to 0.0.
+        vehicle_diameter_m (float): Main diameter of the vehicle/stage, in meters.
+            Used for fairing and structural estimations.
         total_fairing_area_m2 (float, optional): Total wetted surface area of
             fairings (payload, intertank, aft). Used by `akin_mers.estimate_fairing_mass`.
             If 0, this MER is skipped. Defaults to 0.0.
     """
     # --- Core Mission & Payload Inputs ---
     payload_mass_kg: float
-    delta_v_ms: float = 9200.0
+    delta_v_ms: float
 
     # --- 1st Pass Sizing Inputs (Akin) ---
-    initial_delta: float = 0.08  # M_i / M_o guess
-    initial_twr: float = 1.3
-    num_engines: int = 6
+    initial_delta: float
+    initial_twr: float
+    num_engines: int
 
     # --- Geometry Inputs (Akin) ---
-    tank_geometry: Literal["Sphere", "Cylinder"] = "Sphere"
-    vehicle_diameter_m: float = 0.0  # Required for 'Cylinder'
-    payload_fairing_height_m: float = 7.0
-    intertank_fairing_height_m: float = 7.0
-    aft_fairing_height_m: float = 7.0
+    tank_geometry: Literal["Sphere", "Cylinder"]
+    vehicle_diameter_m: float
+    payload_fairing_height_m: float
+    intertank_fairing_height_m: float
+    aft_fairing_height_m: float
 
     # --- Calculated/Placeholder Values ---
     # These are calculated by the Akin model, not set as inputs.
-    engine: Optional[EngineParams] = None  # Set during analysis
-    propellant_mass_kg: float = 0.0
-    vehicle_gross_mass_kg: float = 0.0
-    vehicle_length_m: float = 0.0
-    stage_inert_mass_kg: float = 0.0  # M_i (calculated)
+    engine: Optional[EngineParams]
+    propellant_mass_kg: float
+    vehicle_gross_mass_kg: float
+    vehicle_length_m: float
+    stage_inert_mass_kg: float
 
     @property
     def engine_mass_kg(self) -> float:

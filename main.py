@@ -164,51 +164,26 @@ def run_stage_model_example(engine_name: str, engine_params: EngineParams):
 
 def run_akin_default_ssto_example():
     """
-    Runs the Akin SSTO 1st Pass analysis with its internal
+    Runs the Akin SSTO Pass analysis with its internal
     default parameters (based on the PDF example).
     """
     print("=" * 70)
-    print("🌍 RUNNING AKIN SSTO 1st PASS EXAMPLE (Default Config)")
-    print("   (Using Spherical Tanks, delta_0 = 8.0%)")
+    print("🌍 RUNNING AKIN SSTO PASS EXAMPLE (Default Config)")
     print("=" * 70)
 
     try:
         # 1. Get the default config (now returns dataclasses)
+        # Options: get_akin_ssto_default_params_1st, get_akin_ssto_default_params_2nd, get_akin_ssto_default_params_3rd
         engine_params, stage_params = get_akin_ssto_default_params_1st()
 
         # 2. Run the analysis
         results = run_akin_ssto_example(engine_params, stage_params)
 
         # 3. Print the results
-        print_ssto_results(results, show_pdf_ref=True)
+        # Options: pass_num=1, 2, 3
+        print_ssto_results(results, pass_num=1, show_pdf_ref=True)
+
         return results  # Return for iteration
-
-    except Exception as e:
-        print(f"ERROR running Akin SSTO example: {e}")
-    print("\n")
-    return None
-
-
-def run_akin_iterative_example(pass_num: int, params_func):
-    """
-    Runs the Akin SSTO 2nd or 3rd Pass analysis.
-    """
-    print("=" * 70)
-    print(f"🌍 RUNNING AKIN SSTO {pass_num}nd/rd PASS EXAMPLE")
-    print(f"   (Using Cylindrical Tanks & updated delta guess)")
-    print("=" * 70)
-
-    try:
-        # 1. Get the config for this pass
-        engine_params, stage_params = params_func()
-
-        # 2. Run the analysis
-        results = run_akin_ssto_example(engine_params, stage_params)
-
-        # 3. Print the results
-        # We set show_pdf_ref=False as the PDF values only match Pass 1
-        print_ssto_results(results, show_pdf_ref=False)
-        return results
 
     except Exception as e:
         print(f"ERROR running Akin SSTO example: {e}")
@@ -286,15 +261,5 @@ if __name__ == "__main__":
     # Scenario 1: Run the specific config from the PDF (Pass 1)
     results_1st_pass = run_akin_default_ssto_example()
 
-    # Scenario 2: Run Pass 2 (Cylindrical tanks)
-    results_2nd_pass = run_akin_iterative_example(
-        2, get_akin_ssto_default_params_2nd
-    )
-
-    # Scenario 3: Run Pass 3 (Cylindrical tanks, refined delta)
-    results_3rd_pass = run_akin_iterative_example(
-        3, get_akin_ssto_default_params_3rd
-    )
-
-    # Scenario 4: Run the same mission, but swap in SSME engine params
+    # Scenario 2: Run the same mission, but swap in SSME engine params
     run_akin_ssto_analysis_with_engine("SSME (LOX/LH2 SC)", engine_ssme)

@@ -111,6 +111,7 @@ def get_akin_ssto_default_params_1st() -> Tuple[EngineParams, StageParams]:
     This pass uses:
     - initial_delta = 0.08
     - tank_geometry = "Sphere"
+    - dV = 9200 m/s
 
     Returns:
         Tuple[EngineParams, StageParams]: A tuple containing the
@@ -132,16 +133,28 @@ def get_akin_ssto_default_params_1st() -> Tuple[EngineParams, StageParams]:
 
     # Mission & Stage params from Page 3, 22, 27
     stage = StageParams(
+        # --- Core Mission & Payload Inputs ---
         payload_mass_kg=5000.0,
         delta_v_ms=9200.0,
+
+        # --- 1st Pass Sizing Inputs (Akin) ---
         initial_delta=0.08,
         initial_twr=1.3,
         num_engines=6,
-        tank_geometry="Sphere",  # 1st pass assumes spherical tanks
-        vehicle_diameter_m=0.0,  # Calculated from sphere radius
+
+        # --- Geometry Inputs (Akin) ---
+        tank_geometry="Sphere",
+        vehicle_diameter_m=0.0,  # 1st pass uses sphere radius, so diameter input is 0
         payload_fairing_height_m=7.0,
         intertank_fairing_height_m=7.0,
-        aft_fairing_height_m=7.0
+        aft_fairing_height_m=7.0,
+
+        # --- Calculated/Placeholder Values ---
+        engine=None,  # Set to None initially, assigned 'engine' obj below
+        propellant_mass_kg=0.0,
+        vehicle_gross_mass_kg=0.0,
+        vehicle_length_m=0.0,
+        stage_inert_mass_kg=0.0
     )
 
     stage.engine = engine
@@ -154,25 +167,45 @@ def get_akin_ssto_default_params_2nd() -> Tuple[EngineParams, StageParams]:
     based on the results of the 1st Pass (Page 31-32).
 
     This pass uses:
-    - initial_delta = 0.0853 (Calculated: 13052 kg / 153000 kg)
+    - initial_delta = 0.08
     - tank_geometry = "Cylinder"
-    - vehicle_diameter_m = 8.56 m (Calculated: 2 * r_lh2_tank from 1st pass)
+    - vehicle_diameter_m =4 m
+    - Fairing heights adjusted (Page 31)
 
     Returns:
         Tuple[EngineParams, StageParams]: A tuple containing the
         updated engine and stage/mission parameters.
     """
-    engine, stage = get_akin_ssto_default_params_1st()
+    # Mission & Stage params from Page 3, 22, 27
+    engine, _ = get_akin_ssto_default_params_1st()
 
-    # Update params for 2nd Iteration (Page 31)
-    # delta = M_i(pass1) / M_o(pass1) = 13052 / 153000 = 0.0853
-    stage.initial_delta = 0.0853
+    # Mission & Stage params from Page 3, 22, 27
+    stage = StageParams(
+        # --- Core Mission & Payload Inputs ---
+        payload_mass_kg=5000.0,
+        delta_v_ms=9200.0,
 
-    # Use cylindrical tanks based on 1st pass LH2 tank radius
-    stage.tank_geometry = "Cylinder"
-    # M_i(pass1) r_lh2_tank = 4.28m. D = 2 * 4.28 = 8.56m
-    stage.vehicle_diameter_m = 8.56  # (2 * 4.28m)
+        # --- 1st Pass Sizing Inputs (Akin) ---
+        initial_delta=0.08,
+        initial_twr=1.3,
+        num_engines=6,
 
+        # --- Geometry Inputs (Akin) ---
+        tank_geometry="Cylinder",
+        vehicle_diameter_m=4.0,
+        payload_fairing_height_m=7.0,
+        intertank_fairing_height_m=4.0,
+        aft_fairing_height_m=5.0,
+
+        # --- Calculated/Placeholder Values ---
+        engine=None,  # Set to None initially, assigned 'engine' obj below
+        propellant_mass_kg=0.0,
+        vehicle_gross_mass_kg=0.0,
+        vehicle_length_m=0.0,
+        stage_inert_mass_kg=0.0
+    )
+
+    stage.engine = engine
     return engine, stage
 
 
@@ -182,21 +215,41 @@ def get_akin_ssto_default_params_3rd() -> Tuple[EngineParams, StageParams]:
     based on the results of the 2nd Pass (Page 33-34).
 
     This pass uses:
-    - initial_delta = 0.08088 (Calculated: 12716 kg / 157240 kg)
+    - initial_delta = 0.08323 (Calculated: 12716 kg / 157240 kg)
     - tank_geometry = "Cylinder"
-    - vehicle_diameter_m = 8.56 m (Same as 2nd pass)
+    - vehicle_diameter_m = 4.2 m
 
     Returns:
         Tuple[EngineParams, StageParams]: A tuple containing the
         updated engine and stage/mission parameters.
     """
-    engine, stage = get_akin_ssto_default_params_2nd()
+    engine, _ = get_akin_ssto_default_params_1st()
 
-    # Update params for 3rd Iteration (Page 33)
-    # delta = M_i(pass2) / M_o(pass2) = 12716 / 157240 = 0.08088
-    stage.initial_delta = 0.08088
+    # Mission & Stage params from Page 3, 22, 27
+    stage = StageParams(
+        # --- Core Mission & Payload Inputs ---
+        payload_mass_kg=5000.0,
+        delta_v_ms=9200.0,
 
-    # Geometry remains cylindrical with the same diameter
+        # --- 1st Pass Sizing Inputs (Akin) ---
+        initial_delta=0.08323,
+        initial_twr=1.3,
+        num_engines=6,
+
+        # --- Geometry Inputs (Akin) ---
+        tank_geometry="Cylinder",
+        vehicle_diameter_m=4.2,
+        payload_fairing_height_m=7.0,
+        intertank_fairing_height_m=4.25,
+        aft_fairing_height_m=5.25,
+
+        # --- Calculated/Placeholder Values ---
+        engine=None,  # Set to None initially, assigned 'engine' obj below
+        propellant_mass_kg=0.0,
+        vehicle_gross_mass_kg=0.0,
+        vehicle_length_m=0.0,
+        stage_inert_mass_kg=0.0
+    )
 
     return engine, stage
 
