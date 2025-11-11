@@ -540,12 +540,26 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
         vehicle_radius_for_fairings_m = vehicle_radius_m
 
         # Page 31
-        r_lox_tank_m, A_lox_tank, h_lox_tank_m = _calculate_cylinder_geom(
+        # Get the geometry (radius, total surface area, height)
+        # Note: The area returned by _calculate_cylinder_geom (A_..._geom)
+        # is the *total geometric area* (sides + 2 caps)
+        # and is NOT used for insulation per the PDF's logic.
+        r_lox_tank_m, _A_lox_tank_geom, h_lox_tank_m = _calculate_cylinder_geom(
             M_lox, DENSITY_LOX, vehicle_radius_m
         )
-        r_lh2_tank_m, A_lh2_tank, h_lh2_tank_m = _calculate_cylinder_geom(
+        r_lh2_tank_m, _A_lh2_tank_geom, h_lh2_tank_m = _calculate_cylinder_geom(
             M_lh2, DENSITY_LH2, vehicle_radius_m
         )
+
+        # --- PDF Pass 2/3 Insulation Area Fix ---
+        # The PDF (Pages 31-32) implies the insulation mass for
+        # cylindrical tanks is *not* based on the cylinder's geometric
+        # area (side + 2 caps), but is instead based on the
+        # surface area of a sphere of the same radius (4 * pi * r^2).
+        # This is an empirical fix to match the PDF's mass budget.
+        # Based on reverse-engineering of Pass 2 (Page 32)
+        A_lox_tank = 4.0 * math.pi * (r_lox_tank_m ** 2)
+        A_lh2_tank = 4.0 * math.pi * (r_lh2_tank_m ** 2)
     else:
         raise ValueError(f"Unknown tank_geometry: {stage.tank_geometry}")
 
@@ -840,7 +854,7 @@ if __name__ == "__main__":
 
     # 1. Get the specific config from the PDF (now dataclasses)
     # Options: get_akin_ssto_default_params_1st, get_akin_ssto_default_params_2nd, get_akin_ssto_default_params_3rd
-    engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_3rd()
+    engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_2nd()
 
     # 2. Run the analysis
     try:
@@ -848,7 +862,7 @@ if __name__ == "__main__":
 
         # 3. Print the formatted results
         # Options: pass_num=1, 2, 3
-        print_ssto_results(results, pass_num = 3, show_pdf_ref=True)
+        print_ssto_results(results, pass_num = 2, show_pdf_ref=True)
 
     except Exception as e:
         print(f"\nAn error occurred during the analysis: {e}")
