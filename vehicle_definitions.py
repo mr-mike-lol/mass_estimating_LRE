@@ -8,6 +8,7 @@ from typing import Dict, Any, Tuple
 DENSITY_LOX = 1140.0
 DENSITY_LH2 = 71.0
 DENSITY_RP1 = 820.0  # From Akin (ENAE 791), Page 7 [cite: 1280]
+DENSITY_LCH4 = 820.0
 # Standard gravity for Isp <-> Ve conversion
 G0 = 9.80665
 
@@ -266,20 +267,41 @@ def default_rocket_params() -> Tuple[EngineParams, StageParams]:
         SSME engine and a custom stage/mission.
     """
     # 1. Get a known, high-performance engine
-    engine = get_ssme_engine()
-
+    engine = EngineParams(
+        thrust_vac_N=0.0,
+        isp_vac_s=320.0,
+        chamber_pressure_Pa=10e6,  # 1000 psi
+        propellant_type="LOX/LCH4",
+        cycle_type="SC",
+        mixture_ratio=6.0,
+        expansion_ratio=30.0,
+        fuel_density=DENSITY_LCH4,
+        oxidizer_density=DENSITY_LOX,
+    )
     # 2. Define a new, custom mission
     stage = StageParams(
-        payload_mass_kg=20000.0,  # Larger payload
-        delta_v_ms=9000.0,
-        initial_delta=0.09,  # Start with a 9% inert guess
+        # --- Core Mission & Payload Inputs ---
+        payload_mass_kg=500.0,
+        delta_v_ms=7000.0,
+
+        # --- 1st Pass Sizing Inputs (Akin) ---
+        initial_delta=0.08323,
         initial_twr=1.25,
-        num_engines=3,  # Use 3 SSMEs
-        tank_geometry="Cylinder",  # Assume cylindrical tanks
-        vehicle_diameter_m=8.4,  # e.g., Space Shuttle ET diameter
-        payload_fairing_height_m=15.0,
-        intertank_fairing_height_m=5.0,
-        aft_fairing_height_m=10.0
+        num_engines=4,
+
+        # --- Geometry Inputs (Akin) ---
+        tank_geometry="Cylinder",
+        vehicle_diameter_m=2.0,
+        payload_fairing_height_m=7.0,
+        intertank_fairing_height_m=2,
+        aft_fairing_height_m=3,
+
+        # --- Calculated/Placeholder Values ---
+        engine=None,  # Set to None initially, assigned 'engine' obj below
+        propellant_mass_kg=0.0,
+        vehicle_gross_mass_kg=0.0,
+        vehicle_length_m=0.0,
+        stage_inert_mass_kg=0.0
     )
 
     stage.engine = engine

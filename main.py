@@ -5,10 +5,7 @@ from models import akin_mers, mota_schlingloff
 from models import zandbergen_engine, tizon_rema, kibbey_stage
 from models.akin_mers import run_akin_ssto_example, print_ssto_results
 from vehicle_definitions import (
-    get_le5_engine, get_ssme_engine, get_rl10a_engine, get_rd120_engine,
-    get_akin_ssto_default_params_1st,
-    get_akin_ssto_default_params_2nd,
-    get_akin_ssto_default_params_3rd
+    get_le5_engine, get_ssme_engine, get_rl10a_engine, get_rd120_engine, default_rocket_params
 )
 
 
@@ -19,7 +16,7 @@ def run_engine_mass_comparison(engine_name: str, engine_params: EngineParams):
     including component breakdown where available.
     """
     print("=" * 70)
-    print(f"🚀 RUNNING COMPARISON FOR: {engine_name}")
+    print(f"   RUNNING COMPARISON FOR: {engine_name}")
     print(f"   (Params: {engine_params.thrust_vac_N / 1_000_000:.3f} MN, "
           f"P_c: {engine_params.chamber_pressure_Pa / 1e6:.2f} MPa, "
           f"Ae/At: {engine_params.expansion_ratio:.1f})")
@@ -30,13 +27,37 @@ def run_engine_mass_comparison(engine_name: str, engine_params: EngineParams):
 
     # --- 1. Akin (1991) Model ---
     try:
-        akin_mass_kg = akin_mers.estimate_engine_mass(
+        # Calculate all propulsion-related MERs from Akin
+        # that only depend on engine parameters.
+
+        # Formula: M_Rocket_Engine(kg) = 7.81e-4*T(N) + 3.37e-5*T(N)*sqrt(Ae/At) + 59
+        m_engine = akin_mers.estimate_engine_mass(
             engine_params.thrust_vac_N,
             engine_params.expansion_ratio
         )
+
+        # Formula: M_Thrust_Structure(kg) = 2.55e-4*T(N)
+        m_thrust_structure = akin_mers.estimate_thrust_structure_mass(
+            engine_params.thrust_vac_N
+        )
+
+        # Formula: M_Gimbals(kg) = 237.8 * [T(N) / P_c(Pa)]^0.9375
+        m_gimbals = akin_mers.estimate_gimbal_mass(
+            engine_params.thrust_vac_N,
+            engine_params.chamber_pressure_Pa
+        )
+
+        # Sum them up for a total "Akin Propulsion System" mass
+        total_propulsion_mass = m_engine + m_thrust_structure + m_gimbals
+
         results["Akin (1991)"] = {
-            "total_mass_kg": akin_mass_kg,
-            "note": "Note: Simplified MER, ignores cycle/propellant type."
+            "total_mass_kg": total_propulsion_mass,
+            "components_kg": {
+                "Engine (MER)": m_engine,
+                "Thrust Structure (MER)": m_thrust_structure,
+                "Gimbals (MER)": m_gimbals
+            },
+            "note": "Note: Propulsion system components (MERs). Ignores cycle."
         }
     except Exception as e:
         results["Akin (1991)"] = {"error": str(e)}
@@ -76,7 +97,7 @@ def run_engine_mass_comparison(engine_name: str, engine_params: EngineParams):
         results["Mota/Schlingloff (2005)"] = {"error": str(e)}
 
     # --- Print Results ---
-    print("--- 📊 Engine Mass Estimation Results ---")
+    print("---  Engine Mass Estimation Results ---")
 
     # First, print the total mass summary table
     print("\n--- Total Mass Summary ---")
@@ -110,7 +131,7 @@ def run_stage_model_example(engine_name: str, engine_params: EngineParams):
     Runs an example of the STAGE MASS ESTIMATION model (Kibbey).
     """
     print("=" * 70)
-    print(f"🛰️  RUNNING STAGE MODEL EXAMPLE (Kibbey, 2015)")
+    print(f"   RUNNING STAGE MODEL EXAMPLE (Kibbey, 2015)")
     print(f"   Using engine: {engine_name}")
     print(f"   Reference Stage: Atlas V (LOX/RP1)")
     print("=" * 70)
@@ -134,7 +155,7 @@ def run_stage_model_example(engine_name: str, engine_params: EngineParams):
         lambda_frac = stage_fractions['propellant_mass_fraction']
         inert_frac = 1.0 - lambda_frac
 
-        print(f"--- 📈 Kibbey Stage Model Results ---")
+        print(f"---   Kibbey Stage Model Results ---")
 
         # Add a note about relevance
         if engine_params.propellant_type == "LOX/RP1":
@@ -162,49 +183,15 @@ def run_stage_model_example(engine_name: str, engine_params: EngineParams):
     print("\n")
 
 
-def run_akin_default_ssto_example():
-    """
-    Runs the Akin SSTO Pass analysis with its internal
-    default parameters (based on the PDF example).
-    """
-    print("=" * 70)
-    print("🌍 RUNNING AKIN SSTO PASS EXAMPLE (Default Config)")
-    print("=" * 70)
-
-    try:
-        # 1. Get the default config (now returns dataclasses)
-        # Options: get_akin_ssto_default_params_1st, get_akin_ssto_default_params_2nd, get_akin_ssto_default_params_3rd
-        engine_params, stage_params = get_akin_ssto_default_params_1st()
-
-        # 2. Run the analysis
-        results = run_akin_ssto_example(engine_params, stage_params)
-
-        # 3. Print the results
-        # Options: pass_num=1, 2, 3
-        print_ssto_results(results, pass_num=1, show_pdf_ref=True)
-
-        return results  # Return for iteration
-
-    except Exception as e:
-        print(f"ERROR running Akin SSTO example: {e}")
-    print("\n")
-    return None
-
-
 def run_akin_ssto_analysis_with_engine(engine_name: str, engine_params: EngineParams):
     """
     Runs the Akin SSTO 1st Pass analysis, but OVERRIDES
     the default engine parameters with those from a specific engine.
     """
-    print("=" * 70)
-    print(f"🌍 RUNNING AKIN SSTO 1st PASS EXAMPLE (using {engine_name})")
-    print("   (Overriding default engine params with new engine)")
-    print("=" * 70)
-
     try:
         # 1. Get the default *mission* config
         # We only need the 'stage' object, the 'engine' will be replaced
-        _default_engine, stage_params = get_akin_ssto_default_params_1st()
+        _default_engine, stage_params = default_rocket_params()
 
         # 2. OVERRIDE engine-specific params
         print(f"... Using {engine_name} engine data...")
@@ -224,21 +211,31 @@ def run_akin_ssto_analysis_with_engine(engine_name: str, engine_params: EnginePa
 
 
 if __name__ == "__main__":
-    # --- 1. Get our test case engines ---
-    engine_le5 = get_le5_engine()  # LOX/LH2 GG
-    engine_ssme = get_ssme_engine()  # LOX/LH2 SC
-    engine_rl10 = get_rl10a_engine()  # LOX/LH2 EX
-    engine_rd120 = get_rd120_engine()  # LOX/RP1 SC
+
+    # --- 1. Define test case engines ---
+    # Store engines in a dictionary for easy, repeatable access
+    # Keys are simple identifiers, values are (Name String, Engine Object)
+    test_engines = {
+        "le5": ("LE-5 (LOX/LH2 GG)", get_le5_engine()),
+        "ssme": ("SSME (LOX/LH2 SC)", get_ssme_engine()),
+        "rl10": ("RL10A (LOX/LH2 EX)", get_rl10a_engine()),
+        "rd120": ("RD-120 (LOX/RP1 SC)", get_rd120_engine()),
+    }
+
+    # --- Define a separate *scenario* for a custom run ---
+    # default_rocket_params() returns (EngineParams, StageParams)
+    custom_engine, custom_stage = default_rocket_params()
+    custom_scenario_name = "Custom Run"
 
     # --- 2. Run Engine Mass Comparison ---
     print("||||" + "=" * 70 + "||||")
     print("||||   PART 1: ENGINE MASS MODEL COMPARISON")
     print("||||" + "=" * 70 + "||||")
 
-    run_engine_mass_comparison("LE-5 (LOX/LH2 GG)", engine_le5)
-    run_engine_mass_comparison("SSME (LOX/LH2 SC)", engine_ssme)
-    run_engine_mass_comparison("RL10A (LOX/LH2 EX)", engine_rl10)
-    run_engine_mass_comparison("RD-120 (LOX/RP1 SC)", engine_rd120)
+    # Loop through all defined engines
+    # This will now work correctly
+    for engine_name, engine_params in test_engines.values():
+        run_engine_mass_comparison(engine_name, engine_params)
 
     # --- 3. Run Stage Model Example ---
     print("||||" + "=" * 70 + "||||")
@@ -246,20 +243,33 @@ if __name__ == "__main__":
     print("||||" + "=" * 70 + "||||")
 
     # Kibbey's model is calibrated on Atlas V (LOX/RP1).
-    # Running it with the RD-120 (also LOX/RP1)
-    # is the most relevant test case.
-    run_stage_model_example("RD-120 (LOX/RP1 SC)", engine_rd120)
+    # We run the RD-120 (also LOX/RP1) as the most relevant test.
+    engine_name_rd120, params_rd120 = test_engines["rd120"]
+    run_stage_model_example(engine_name_rd120, params_rd120)
 
     # Also run for SSME to see the extrapolation
-    run_stage_model_example("SSME (LOX/LH2 SC)", engine_ssme)
+    engine_name_ssme, params_ssme = test_engines["ssme"]
+    run_stage_model_example(engine_name_ssme, params_ssme)
 
     # --- 4. Run Akin SSTO Full Example ---
     print("||||" + "=" * 70 + "||||")
-    print("||||   PART 3: AKIN MERS SSTO EXAMPLE (from PDF)")
+    print("||||   PART 3: AKIN MERS SSTO EXAMPLE")
     print("||||" + "=" * 70 + "||||")
 
-    # Scenario 1: Run the specific config from the PDF (Pass 1)
-    results_1st_pass = run_akin_default_ssto_example()
+    # Scenario 1: Run default mission but override with SSME engine
+    run_akin_ssto_analysis_with_engine(engine_name_ssme, params_ssme)
 
-    # Scenario 2: Run the same mission, but swap in SSME engine params
-    run_akin_ssto_analysis_with_engine("SSME (LOX/LH2 SC)", engine_ssme)
+    # Scenario 2: Run the fully custom scenario
+    print("\n" + "=" * 70)
+    print(f"RUNNING AKIN SSTO CUSTOM SCENARIO ({custom_scenario_name})")
+    print("=" * 70)
+
+    # Correctly call the core analysis function
+    # with the custom engine and custom stage
+    try:
+        custom_results = run_akin_ssto_example(custom_engine, custom_stage)
+        # Print the results (using the helper from akin_mers)
+        print_ssto_results(custom_results, show_pdf_ref=False)
+    except Exception as e:
+        print(f"ERROR running Akin Custom SSTO example: {e}")
+    print("\n")
