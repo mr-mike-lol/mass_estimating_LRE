@@ -18,7 +18,7 @@ def _estimate_turbopump_mass(thrust_kN: float, pc_bar: float,
     Modeling and Analysis of a LOX/Ethanol... (Mota et al., 2018), Eq. 21 text.
     Citing Schlingloff (2005).
     Formula: m_tp = C_propellant * C_tp * (F_kN * p_c_bar)^0.71
-    [cite: 2878]
+    [cite: 230]
     """
     return c_propellant * c_tp * ((thrust_kN * pc_bar) ** 0.71)
 
@@ -31,7 +31,7 @@ def _estimate_valve_mass(thrust_kN: float, pc_bar: float) -> float:
     Modeling and Analysis of a LOX/Ethanol... (Mota et al., 2018), Eq. 21 text.
     Citing Schlingloff (2005).
     Formula: m_valve = 0.02 * (F_kN * p_c_bar)^0.71
-    [cite: 2878]
+    [cite: 230]
     """
     return 0.02 * ((thrust_kN * pc_bar) ** 0.71)
 
@@ -44,7 +44,7 @@ def _estimate_injector_mass(thrust_kN: float) -> float:
     Modeling and Analysis of a LOX/Ethanol... (Mota et al., 2018), Eq. 21 text.
     Citing Schlingloff (2005).
     Formula: m_inj = 0.25 * (F_kN)^0.85
-    [cite: 2878]
+    [cite: 230]
     """
     return 0.25 * (thrust_kN ** 0.85)
 
@@ -57,7 +57,7 @@ def _estimate_chamber_mass(thrust_kN: float) -> float:
     Modeling and Analysis of a LOX/Ethanol... (Mota et al., 2018), Eq. 21 text.
     Citing Schlingloff (2005).
     Formula: m_cc = 0.75 * (F_kN)^0.85
-    [cite: 2878]
+    [cite: 230]
     """
     return 0.75 * (thrust_kN ** 0.85)
 
@@ -70,7 +70,7 @@ def _estimate_nozzle_mass(thrust_kN: float, pc_bar: float, c_nozzle: float) -> f
     Modeling and Analysis of a LOX/Ethanol... (Mota et al., 2018), Eq. 21 text.
     Citing Schlingloff (2005).
     Formula: m_nc = F_kN * (0.00225 * C_nozzle + (0.225 - 0.075 * C_nozzle)) / p_c_bar
-    [cite: 2878]
+    [cite: 230]
     """
     if pc_bar == 0:
         return 0.0
@@ -90,7 +90,7 @@ def estimate_total_engine_mass(params: EngineParams,
     Estimates total engine mass using the Schlingloff (2005) component model.
 
     This function implements the component models described in Mota et al. (2018)
-    [cite: 2876-2880], which are then summed and multiplied by a correction factor.
+    [cite: 228, 230, 231, 232], which are then summed and multiplied by a correction factor.
 
     The model requires specific units:
     - Thrust in KiloNewtons (kN)
@@ -101,7 +101,7 @@ def estimate_total_engine_mass(params: EngineParams,
 
     Reference:
     Modeling and Analysis of a LOX/Ethanol... (Mota et al., 2018), p. 6-7.
-    [cite: 2864-2880]
+    [cite: 216-248]
 
     Args:
         params (EngineParams): The engine's parameter object.
@@ -120,16 +120,16 @@ def estimate_total_engine_mass(params: EngineParams,
 
     # --- 2. Determine model constants based on inputs ---
 
-    # C_propellant: 0.19 (high energetic), 0.11 (low energetic) [cite: 2879]
+    # C_propellant: 0.19 (high energetic), 0.11 (low energetic) [cite: 231]
     if params.propellant_type == "LOX/LH2":
         c_propellant = 0.19
     else:
         c_propellant = 0.11  # For LOX/RP1, LOX/LCH4, Storable
 
-    # C_tp: 0.5 (boost-pumps), 1.0 (no boost-pumps) [cite: 2879]
+    # C_tp: 0.5 (boost-pumps), 1.0 (no boost-pumps) [cite: 231]
     c_tp = 0.5 if has_boost_pumps else 1.0
 
-    # C_nozzle: 1.0 (regenerative), 0.0 (dump cooling) [cite: 2879]
+    # C_nozzle: 1.0 (regenerative), 0.0 (dump cooling) [cite: 232]
     c_nozzle = 1.0 if is_regen_cooled else 0.0
 
     # --- 3. Calculate mass for each component ---
@@ -143,8 +143,8 @@ def estimate_total_engine_mass(params: EngineParams,
     # --- 4. Sum components and apply correction factor ---
 
     # This model uses the original Schlingloff (2005) factor
-    # The paper also explores a hybrid model (Eq. 23)[cite: 2891], but that
-    # requires a different m_tp (Eq. 22) [cite: 2883-2885] for which we lack inputs (Pump Power).
+    # The paper also explores a hybrid model (Eq. 23), but that
+    # requires a different m_tp (Eq. 22) [cite: 237] for which we lack inputs (Pump Power).
     # We are implementing the self-contained Schlingloff model (Eq. 21).
 
     correction_factor = 1.34  # From Eq. 21
