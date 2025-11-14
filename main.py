@@ -64,8 +64,33 @@ def run_engine_mass_comparison(engine_name: str, engine_params: EngineParams):
 
     # --- 2. Zandbergen (2015) Model ---
     try:
-        results["Zandbergen (2015)"] = zandbergen_engine.estimate_engine_mass(engine_params)
-        results["Zandbergen (2015)"]["note"] = "Note: Simple regression (Thrust + prop class). Monolithic."
+        # Run default (M-C1/M-S1)
+        res_default = zandbergen_engine.estimate_engine_mass(engine_params)
+        model_name_default = f"Zandbergen ({res_default['method_used']})"
+        results[model_name_default] = {
+            "total_mass_kg": res_default["total_mass_kg"],
+            "note": "Note: Simple regression (Thrust + prop class). Monolithic."
+        }
+
+        # Run more complex models if applicable
+        if engine_params.propellant_type == "LOX/LH2":
+            # M-C3 (with cycle type)
+            res_mc3 = zandbergen_engine.estimate_engine_mass(engine_params, method="M-C3")
+            model_name_mc3 = f"Zandbergen ({res_mc3['method_used']})"
+            results[model_name_mc3] = {
+                "total_mass_kg": res_mc3["total_mass_kg"],
+                "note": "Note: Hydro-lox regression (uses cycle type)."
+            }
+
+        elif engine_params.propellant_type in ["LOX/RP1", "LOX/LCH4", "Storable"]:
+            # M-S2 (with NT, Expansion Ratio)
+            res_ms2 = zandbergen_engine.estimate_engine_mass(engine_params, method="M-S2")
+            model_name_ms2 = f"Zandbergen ({res_ms2['method_used']})"
+            results[model_name_ms2] = {
+                "total_mass_kg": res_ms2["total_mass_kg"],
+                "note": "Note: Kero-lox regression (uses NT, Ae/At)."
+            }
+
     except Exception as e:
         results["Zandbergen (2015)"] = {"error": str(e)}
 

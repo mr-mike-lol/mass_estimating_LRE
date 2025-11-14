@@ -255,16 +255,9 @@ def get_akin_ssto_default_params_3rd() -> Tuple[EngineParams, StageParams]:
     return engine, stage
 
 
-def default_rocket_params() -> Tuple[EngineParams, StageParams]:
+def get_default_engine() -> EngineParams:
     """
-    Creates a set of default parameters for a *custom* rocket analysis,
-    using the SSME as the engine and a larger payload.
-
-    This is for use in `main.py` for custom analysis runs.
-
-    Returns:
-        Tuple[EngineParams, StageParams]: A tuple containing the
-        SSME engine and a custom stage/mission.
+    Creates a set of default parameters for a *custom* rocket engine.
     """
     # 1. Get a known, high-performance engine
     engine = EngineParams(
@@ -278,6 +271,23 @@ def default_rocket_params() -> Tuple[EngineParams, StageParams]:
         fuel_density=DENSITY_LCH4,
         oxidizer_density=DENSITY_LOX,
     )
+    return engine
+
+
+def default_rocket_params() -> Tuple[EngineParams, StageParams]:
+    """
+    Creates a set of default parameters for a *custom* rocket analysis,
+    using the SSME as the engine and a larger payload.
+
+    This is for use in `main.py` for custom analysis runs.
+
+    Returns:
+        Tuple[EngineParams, StageParams]: A tuple containing the
+        SSME engine and a custom stage/mission.
+    """
+    # 1. Get a known, high-performance engine
+    engine = get_default_engine()
+
     # 2. Define a new, custom mission
     stage = StageParams(
         # --- Core Mission & Payload Inputs ---

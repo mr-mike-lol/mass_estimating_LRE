@@ -1,4 +1,47 @@
 # models/mota_schlingloff.py
+"""
+Implements the Mota/Schlingloff (2005) analytical-statistical mass model
+for liquid rocket engines, as presented in Mota et al. (2018).
+
+Approach Overview:
+This model estimates the total dry mass of a pump-fed liquid rocket
+engine by breaking it down into five key components:
+1.  Turbopump (m_tp)
+2.  Valves (m_valve)
+3.  Injector (m_inj)
+4.  Combustion Chamber (m_cc)
+5.  Nozzle & Cooling (m_nc)
+
+Each component's mass is estimated using a separate empirical formula
+derived from key engine parameters (Thrust, Chamber Pressure) and
+technology coefficients. The sum of these component masses
+is then multiplied by a final correction factor (1.34) to arrive
+at the total engine mass.
+
+This approach is described in the paper as an "analytical/statistical model"
+because it "considers not only statistical data but also physical
+relationships".
+
+Pros:
++   **Detailed:** More detailed than a simple top-level regression (like
+    Zandbergen), as it is "sufficiently detailed when the influence
+    of the engine parameters on the engine mass... are aim of study".
++   **Technology-Aware:** The model accounts for key technology choices
+    through coefficients for:
+    * Propellant energy (high vs. low)
+    * Presence of boost pumps
+    * Cooling type (regenerative vs. dump)
++   **Component Breakdown:** Provides a mass estimate for individual
+    components, not just a total number.
+
+Cons:
+-   **Empirical:** The component formulas are still regressions
+    based on "historical and empirical data".
+-   **Known Gaps:** The original Schlingloff (2005) model (Eq. 21)
+    does not explicitly account for the engine's mixture ratio (O/F).
+-   **Unit-Specific:** The formulas are rigid and require specific
+    units (kN and bar) to function correctly.
+"""
 
 from .common_params import EngineParams, PropellantType
 

@@ -1,4 +1,43 @@
 # models/akin_mers.py
+"""
+Implements a collection of Mass Estimating Relations (MERs) for launch
+vehicle components, based on the "Mass Estimating Relations" lecture
+by Dr. David L. Akin (ENAE 791).
+
+Approach Overview:
+This module provides functions for "System-level Estimation"[cite: 667, 688].
+This approach breaks a vehicle down into its primary components
+(tanks, engines, structures, avionics, etc.) and estimates the
+mass of each using simple, empirical formulas[cite: 652].
+
+These MERs are derived from historical data (regression fits) [cite: 701]
+and are more detailed than a single vehicle-level inert fraction,
+but less complex than a full, discipline-oriented analysis [cite: 661-662].
+They are intended for rapid, iterative design passes (e.g., the
+1st and 2nd pass analysis shown in the source document)[cite: 671, 1059].
+
+Pros:
++   **Fast & Iterative:** Allows for quick calculation of a full
+    mass budget, enabling rapid trade studies and design loops
+    (e.g., changing vehicle diameter) [cite: 1059-1063, 1071-1086].
++   **Component-Level Insight:** Provides a mass estimate for each
+    subsystem, offering more insight than a single "delta"[cite: 1056].
++   **Historically Grounded:** The formulas are based on "prior art"
+    and historical data, giving a reasonable starting point[cite: 660, 701].
+
+Cons:
+-   **Empirical, Not Physical:** The formulas (e.g., for tanks) are
+    linear regressions and do not model the underlying physics
+    (like material choice, pressure, or safety factors) [cite: 701, 727-731].
+-   **Brittle:** The MERs may be inaccurate if applied to vehicles
+    or technologies far outside the original dataset (e.g., a
+    modern, auto-claved composite tank might not follow the same
+    MER as the 1970s-era tanks in the data)[cite: 701].
+-   **Requires Iteration:** The first pass is just an estimate. The
+    source document shows the 1st pass (spherical tanks) results
+    in a negative mass margin, proving that iteration is
+    required[cite: 1056].
+"""
 
 import math
 from typing import Literal, Dict, Tuple, Any
