@@ -266,7 +266,7 @@ def get_default_engine() -> EngineParams:
     """
     # 1. Get a known, high-performance engine
     engine = EngineParams(
-        thrust_vac_N=0.0,
+        thrust_vac_N=1_000_000,
         isp_vac_s=320.0,
         chamber_pressure_Pa=10e6,  # 1000 psi
         propellant_type="LOX/LCH4",

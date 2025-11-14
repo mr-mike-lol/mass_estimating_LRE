@@ -893,7 +893,8 @@ if __name__ == "__main__":
 
     # 1. Get the specific config from the PDF (now dataclasses)
     # Options: get_akin_ssto_default_params_1st, get_akin_ssto_default_params_2nd, get_akin_ssto_default_params_3rd
-    engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_2nd()
+    # default_rocket_params
+    engine_params, stage_params = vehicle_definitions.default_rocket_params()
 
     # 2. Run the analysis
     try:
@@ -901,7 +902,7 @@ if __name__ == "__main__":
 
         # 3. Print the formatted results
         # Options: pass_num=1, 2, 3; show_pdf_ref = True to enable ssto_default_params
-        print_ssto_results(results, pass_num = 2, show_pdf_ref=True)
+        print_ssto_results(results, pass_num = 2, show_pdf_ref=False)
 
     except Exception as e:
         print(f"\nAn error occurred during the analysis: {e}")

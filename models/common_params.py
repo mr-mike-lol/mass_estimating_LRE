@@ -1,8 +1,9 @@
 # models/common_params.py
 
 from dataclasses import dataclass
-from typing import Literal, Optional
-from vehicle_definitions import G0
+from typing import Literal, Optional, Dict
+# Standard gravity for Isp <-> Ve conversion, m/s^2
+G0 = 9.80665
 
 # Defines specific, allowed string values for propellant and cycle types
 PropellantType = Literal["LOX/LH2", "LOX/RP1", "LOX/LCH4", "Storable"]
@@ -45,6 +46,10 @@ class EngineParams:
 
     # Added based on Tizon 2017, Table 7  and p. 15
     safety_factor: float = 1.1
+
+    # Material specification for Tizon model (Table 8)
+    # Maps component category (e.g., "nozzle", "turbopumps") to material name
+    materials: Optional[Dict[str, str]] = None
 
     @property
     def bulk_density(self) -> float:

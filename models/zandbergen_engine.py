@@ -58,7 +58,6 @@ of pump fed rocket engines for launch vehicle conceptual design.
 
 from models.common_params import EngineParams
 from typing import Dict, Literal, get_args
-import sys
 import inspect
 import vehicle_definitions
 
