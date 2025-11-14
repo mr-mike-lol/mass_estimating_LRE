@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Literal, Optional, Dict
+
 # Standard gravity for Isp <-> Ve conversion, m/s^2
 G0 = 9.80665
 
@@ -80,7 +81,7 @@ class StageParams:
         engine (EngineParams): The engine object for this stage.
         propellant_mass_kg (float): Propellant load mass for the stage, in kg.
         vehicle_gross_mass_kg (float): Gross mass of the entire launch vehicle (M_o), in kg.
-        vehicle_length_m (float): Total length of the launch vehicle, in meters.
+        vehicle_length_m (float): Total length of the vehicle/stage, in meters.
         stage_inert_mass_kg (float): Inert mass of the stage (excluding engine and payload), in kg.
         payload_mass_kg (float): Mass of the payload (and any upper stages), in kg.
         vehicle_diameter_m (float): Main diameter of the vehicle/stage, in meters.
@@ -94,6 +95,8 @@ class StageParams:
     delta_v_ms: float
 
     # --- 1st Pass Sizing Inputs (Akin) ---
+    # Note: initial_delta is M_inert / M_gross (Inert Mass Fraction)
+    # This is DIFFERENT from Tizon Eq. 69 'f_inert' [cite: 662]
     initial_delta: float
     initial_twr: float
     num_engines: int
@@ -112,6 +115,21 @@ class StageParams:
     vehicle_gross_mass_kg: float
     vehicle_length_m: float
     stage_inert_mass_kg: float
+
+    # --- FIELDS FOR TANK SIZING (Tizon Section VIII) ---
+
+    # Correction factor K [cite: 696, 700] (accounts for fittings, lugs, etc.)
+    tank_correction_factor_K: float = 2.25
+
+    # Ullage, boil-off, and trap volume factor [cite: 683]
+    # (e.g., 1.03 = 3% total extra volume)
+    tank_ullage_factor: float = 1.03
+
+    # Default material properties (e.g., Aluminum 2219)
+    # Used for tank wall thickness calculation (Eq. 81, 84) [cite: 704, 709]
+    tank_material_density_kg_m3: float = 2825.0
+    # Allowable stress (sigma_zul) [cite: 704, 709]
+    tank_material_allowable_stress_Pa: float = 2.9e8
 
     @property
     def engine_mass_kg(self) -> float:
@@ -138,7 +156,7 @@ class SolidRocketMotorParams:
     Used as input for SRM-specific MERs.
 
     Reference:
-    MER for casing mass found in Akin (ENAE 791), Page 25[cite: 359, 361].
+    MER for casing mass found in Akin (ENAE 791), Page 25.
 
     Args:
         total_mass_kg (float): Total mass of the motor (casing + propellant).

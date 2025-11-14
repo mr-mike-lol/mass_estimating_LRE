@@ -52,11 +52,17 @@ Cons:
 """
 
 import math
-from models.common_params import EngineParams, CycleType
-from typing import Literal, Dict, Any, Optional
-from vehicle_definitions import G0, DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4
 import inspect
+from typing import Literal, Dict, Any, Optional
+
+# Import from root (for constants and test functions)
 import vehicle_definitions
+from vehicle_definitions import (
+    DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4, G0
+)
+
+# Import from models/ (for data classes)
+from models.common_params import EngineParams, CycleType, StageParams
 
 # --- 1. Reference Engine Data ---
 # Source: Tizón & Román, 2017, Table 7
@@ -113,7 +119,7 @@ for _cycle, engine in REFERENCE_ENGINES.items():
         engine['m_dot_kg_s'] = engine['thrust_vac_N'] / (engine['isp_vac_s'] * G0)
 
 # --- 2. Mass Fraction Coefficients (Alpha_i) ---
-# Source: Tizón & Román, 2017, Table 5 (Design) [cite: 618]
+# Source: Tizón & Román, 2017, Table 5 (Design)
 ALPHAS_DESIGN: Dict[str, Dict[str, float]] = {
     "SC": {
         "tubes": 0.0640, "manifold": 0.1717, "jacket": 0.0470, "radiative_nozzle": 0.1566,
@@ -135,7 +141,7 @@ ALPHAS_DESIGN: Dict[str, Dict[str, float]] = {
     }
 }
 
-# Source: Tizón & Román, 2017, Table 6 (Historical) [cite: 620]
+# Source: Tizón & Román, 2017, Table 6 (Historical)
 ALPHAS_HISTORICAL: Dict[str, Dict[str, float]] = {
     "SC": {
         "combustion_chamber": 0.0670, "ox_turbopump": 0.1044, "fuel_turbopump": 0.1346,
@@ -252,9 +258,11 @@ COMPONENT_MATERIAL_MAP: Dict[str, str] = {
 }
 
 
+# --- TIZON ENGINE MASS MODEL (SECTION II-VI) ---
+
 class TizonEngineModel:
     """
-    Implements the dimensionless mass model from Tizón & Román, 2017. [cite: 239, 266]
+    Implements the dimensionless mass model from Tizón & Román, 2017.
 
     This class estimates engine mass by scaling component masses relative
     to a cycle-specific reference engine.
@@ -306,7 +314,7 @@ class TizonEngineModel:
         # From F ~ Pc * At, we get At ~ F / Pc.
         # Since At = pi * rt^2, we have (rt/rt0)^2 = (At/At0) ~ (F/Pc) / (F0/Pc0).
         # This proxy is used in place of a direct rt measurement.
-        # An alternative from Eq (12) [cite: 361] would be (m*c* / Pc), but c* is unknown.
+        # An alternative from Eq (12) would be (m*c* / Pc), but c* is unknown.
         rt_ratio_sq_proxy = (params.thrust_vac_N / params.chamber_pressure_Pa) / \
                             (self.ref_engine["thrust_vac_N"] / self.ref_engine["pc_Pa"])
         rt_ratio_proxy = rt_ratio_sq_proxy ** 0.5
@@ -433,7 +441,7 @@ class TizonEngineModel:
             density_ratio = param_ratios["prop_density"]
 
         # Calculate the product: PROD( (P_j / P_j_0) ^ a_ij )
-        # Uses all exponents from Tizon 2017, Tables 2 & 3 [cite: 603, 605]
+        # Uses all exponents from Tizon 2017, Tables 2 & 3
         ratio = 1.0
         ratio *= (param_ratios["pc"] ** exps.get("pc", 0.0))
         ratio *= (param_ratios["expansion_ratio"] ** exps.get("expansion_ratio", 0.0))
@@ -501,6 +509,177 @@ class TizonEngineModel:
         }
 
 
+# --- TIZON STAGE MASS MODELS (SECTION VII & VIII) ---
+
+def calculate_propellant_mass(stage: StageParams) -> float:
+    """
+    Calculates the propellant mass required for a given mission,
+    based on Tizón & Román, 2017, Section VII. [cite: 647]
+
+    This implementation uses the rocket equation variant based on
+    payload mass (m_pay) and inert mass fraction (delta = M_inert / M_gross),
+    which is common in iterative sizing passes (like Akin's).
+
+    M_prop = (M_pay * (MR - 1)) / (1 - MR * delta)
+    where MR = exp(dV / (Isp * g0))
+
+    Args:
+        stage (StageParams): A StageParams object containing inputs:
+            - delta_v_ms
+            - payload_mass_kg
+            - initial_delta (M_inert / M_gross)
+            - engine.isp_vac_s
+
+    Returns:
+        float: The calculated propellant mass (m_prop) in kg.
+    """
+    if not stage.engine:
+        raise ValueError("StageParams.engine must be set to calculate propellant mass.")
+
+    ve = stage.engine.isp_vac_s * G0
+    if ve == 0:
+        return 0.0
+
+    # Calculate Mass Ratio (MR) from the rocket equation [cite: 659]
+    mass_ratio = math.exp(stage.delta_v_ms / ve)
+
+    delta = stage.initial_delta
+    m_pay = stage.payload_mass_kg
+
+    # Re-arranged rocket equation using delta = M_inert / M_gross
+    # This is a variation of Eq. 70 [cite: 663]
+    numerator = m_pay * (mass_ratio - 1.0)
+    denominator = 1.0 - (mass_ratio * delta)
+
+    if denominator <= 0:
+        raise ValueError(
+            f"Rocket equation cannot be solved. "
+            f"The combination of dV ({stage.delta_v_ms} m/s) and "
+            f"inert fraction ({delta}) is physically impossible."
+        )
+
+    m_prop = numerator / denominator
+    return m_prop
+
+
+def calculate_tank_mass(stage: StageParams) -> float:
+    """
+    Calculates the mass of propellant tanks based on Tizón & Román, 2017,
+    Section VIII. [cite: 678]
+
+    This function calculates the mass for two separate tanks (fuel and oxidizer)
+    and applies the geometry rules (Sphere or Cylinder) [cite: 684] and
+    correction factor K. [cite: 696]
+
+    Args:
+        stage (StageParams): A StageParams object containing inputs:
+            - propellant_mass_kg (must be calculated first)
+            - engine (for densities and O/F ratio)
+            - tank_geometry ("Sphere" or "Cylinder")
+            - vehicle_diameter_m (if "Cylinder")
+            - tank_ullage_factor [cite: 683]
+            - tank_material_density_kg_m3
+            - tank_material_allowable_stress_Pa
+            - tank_correction_factor_K [cite: 696]
+
+    Returns:
+        float: The total calculated mass of both tanks (fuel + oxidizer) in kg.
+    """
+    if not stage.engine:
+        raise ValueError("StageParams.engine must be set to calculate tank mass.")
+    if stage.propellant_mass_kg <= 0:
+        raise ValueError("StageParams.propellant_mass_kg must be calculated first.")
+
+    # --- 1. Get parameters from Stage object ---
+    m_prop = stage.propellant_mass_kg
+    o_f_ratio = stage.engine.mixture_ratio
+    fuel_dens = stage.engine.fuel_density
+    ox_dens = stage.engine.oxidizer_density
+
+    rho_tank = stage.tank_material_density_kg_m3
+    sigma_zul = stage.tank_material_allowable_stress_Pa
+    K = stage.tank_correction_factor_K
+    ullage_factor = stage.tank_ullage_factor
+
+    # --- 2. Calculate propellant volumes ---
+    m_fuel = m_prop / (1.0 + o_f_ratio) # [cite: 675]
+    m_ox = m_prop * o_f_ratio / (1.0 + o_f_ratio) # [cite: 676]
+
+    v_fuel_net = m_fuel / fuel_dens
+    v_ox_net = m_ox / ox_dens
+
+    # Total tank volume (propellant + ullage + boil-off, etc.) [cite: 681]
+    v_fuel_total = v_fuel_net * ullage_factor
+    v_ox_total = v_ox_net * ullage_factor
+
+    # --- 3. Calculate tank pressure (Eq. 76) [cite: 688] ---
+    # p_tank = (10^(-0.1068 * (log10(V_tank) - 0.2588))) * 1e6
+    try:
+        p_tank_fuel = (10 ** (-0.1068 * (math.log10(v_fuel_total) - 0.2588))) * 1e6
+        p_tank_ox = (10 ** (-0.1068 * (math.log10(v_ox_total) - 0.2588))) * 1e6
+    except ValueError:
+        raise ValueError("Failed to calculate tank pressure (Eq. 76). Check propellant volumes.")
+
+    # --- 4. Calculate tank mass based on geometry ---
+    total_tank_mass = 0.0
+
+    if stage.tank_geometry == "Sphere":
+        # --- Spherical Tank Calculation (Eq. 79, 80, 81) [cite: 702, 704] ---
+
+        # Fuel Tank
+        r_fuel = (3.0 * v_fuel_total / (4.0 * math.pi)) ** (1.0 / 3.0) # [cite: 702]
+        a_fuel = 4.0 * math.pi * r_fuel ** 2 # [cite: 702]
+        t_fuel = (p_tank_fuel * r_fuel) / (2.0 * sigma_zul)  # [cite: 704]
+        total_tank_mass += (a_fuel * t_fuel * rho_tank)
+
+        # Oxidizer Tank
+        r_ox = (3.0 * v_ox_total / (4.0 * math.pi)) ** (1.0 / 3.0) # [cite: 702]
+        a_ox = 4.0 * math.pi * r_ox ** 2 # [cite: 702]
+        t_ox = (p_tank_ox * r_ox) / (2.0 * sigma_zul)  # [cite: 704]
+        total_tank_mass += (a_ox * t_ox * rho_tank)
+
+    elif stage.tank_geometry == "Cylinder":
+        # --- Cylindrical Tank Calculation (Eq. 82, 83, 84) [cite: 706, 707, 709] ---
+        # Assumes two separate tanks, each with spherical end caps.
+
+        if stage.vehicle_diameter_m <= 0:
+            raise ValueError("vehicle_diameter_m must be > 0 for Cylinder tanks.")
+
+        # Fuel Tank
+        r_fuel = stage.vehicle_diameter_m / 2.0
+        v_caps_fuel = (4.0 / 3.0) * math.pi * r_fuel ** 3  # Volume of 2 end caps
+        l_cyl_fuel = max(0, (v_fuel_total - v_caps_fuel) / (math.pi * r_fuel ** 2))  # [cite: 706]
+
+        a_cyl_fuel = 2.0 * math.pi * r_fuel * l_cyl_fuel  # [cite: 707]
+        a_sph_fuel = 4.0 * math.pi * r_fuel ** 2  # Area of 2 end caps
+
+        t_cyl_fuel = (p_tank_fuel * r_fuel) / sigma_zul  # [cite: 709]
+        t_sph_fuel = (p_tank_fuel * r_fuel) / (2.0 * sigma_zul)  # [cite: 704]
+
+        total_tank_mass += (a_cyl_fuel * t_cyl_fuel * rho_tank) + (a_sph_fuel * t_sph_fuel * rho_tank)
+
+        # Oxidizer Tank
+        r_ox = stage.vehicle_diameter_m / 2.0
+        v_caps_ox = (4.0 / 3.0) * math.pi * r_ox ** 3
+        l_cyl_ox = max(0, (v_ox_total - v_caps_ox) / (math.pi * r_ox ** 2))  # [cite: 706]
+
+        a_cyl_ox = 2.0 * math.pi * r_ox * l_cyl_ox  # [cite: 707]
+        a_sph_ox = 4.0 * math.pi * r_ox ** 2
+
+        t_cyl_ox = (p_tank_ox * r_ox) / sigma_zul  # [cite: 709]
+        t_sph_ox = (p_tank_ox * r_ox) / (2.0 * sigma_zul)  # [cite: 704]
+
+        total_tank_mass += (a_cyl_ox * t_cyl_ox * rho_tank) + (a_sph_ox * t_sph_ox * rho_tank)
+
+    else:
+        raise ValueError(f"Unknown tank_geometry: {stage.tank_geometry}")
+
+    # --- 5. Apply Correction Factor K (Eq. 78) [cite: 696, 700] ---
+    return total_tank_mass * K
+
+
+# --- STANDALONE TEST RUNNERS ---
+
 def run_single_engine_analysis(params: EngineParams):
     """
     Runs a full analysis for a single engine using both "design"
@@ -510,7 +689,7 @@ def run_single_engine_analysis(params: EngineParams):
         params (EngineParams): The engine parameters to analyze.
     """
     print("=" * 70)
-    print(f"Running Tizon/RemA (2017) Analysis for:")
+    print(f"Running Tizon/RemA (2017) Engine-Only Analysis for:")
     print(f"  Thrust: {params.thrust_vac_N / 1_000_000:.3f} MN")
     print(f"  Prop:   {params.propellant_type}")
     print(f"  Cycle:  {params.cycle_type}")
@@ -521,6 +700,7 @@ def run_single_engine_analysis(params: EngineParams):
     print("=" * 70)
 
     methods: list[Literal["design", "historical"]] = ["design", "historical"]
+    results = {}
 
     try:
         for method in methods:
@@ -530,6 +710,7 @@ def run_single_engine_analysis(params: EngineParams):
             # 2. Estimate the mass
             result = model.estimate_total_mass(params)
             total = result['total_mass_kg']
+            results[method] = total
 
             # 3. Print formatted results
             print(f"  --- Method: '{method}' (Reference: {model.ref_engine['name']}) ---")
@@ -544,29 +725,90 @@ def run_single_engine_analysis(params: EngineParams):
             print(f"    {'-' * 30}: {'-' * 10} -- {'-' * 7}")
             print(f"    {'TOTAL MASS':<30}: {total:10,.1f} kg (100.0%)")
             print("-" * 70)
+        
+        return results
 
     except ValueError as e:
         # Catch errors (e.g., "Cycle type X not supported")
         print(f"  ERROR processing {params.cycle_type} engine: {e}")
         print("=" * 70)
+        return None
+
+def run_full_stage_analysis(engine_params: EngineParams, stage_params: StageParams):
+    """
+    Runs a full analysis using functions from this file:
+    1. Calculates Engine Mass (Tizon)
+    2. Calculates Propellant Mass (Tizon Sec VII)
+    3. Calculates Tank Mass (Tizon Sec VIII)
+    """
+    print("=" * 70)
+    print(f"Running Full Stage Analysis (Tizon/RemA 2017)")
+    print(f"  Prop:   {engine_params.propellant_type}")
+    print(f"  Cycle:  {engine_params.cycle_type}")
+    print(f"  dV:     {stage_params.delta_v_ms} m/s")
+    print(f"  Payload: {stage_params.payload_mass_kg} kg")
+    print(f"  Delta_0: {stage_params.initial_delta}")
+    print("=" * 70)
+
+    try:
+        # --- 1. Calculate Engine Mass ---
+        # We use 'historical' as it's generally preferred
+        model = TizonEngineModel(engine_params.cycle_type, method="historical")
+        engine_result = model.estimate_total_mass(engine_params)
+        engine_mass_kg = engine_result['total_mass_kg']
+        print(f"  --- 1. Engine Mass (Historical) ---")
+        print(f"    Total Engine Mass (1x): {engine_mass_kg:,.1f} kg")
+
+        # --- 2. Calculate Propellant Mass ---
+        # We need the engine object inside the stage object
+        stage_params.engine = engine_params
+        m_prop = calculate_propellant_mass(stage_params)
+        stage_params.propellant_mass_kg = m_prop  # Store for next step
+        print(f"\n  --- 2. Propellant Mass (Sec VII) ---")
+        print(f"    Total Propellant Mass: {m_prop:,.1f} kg")
+
+        # --- 3. Calculate Tank Mass ---
+        m_tanks = calculate_tank_mass(stage_params)
+        print(f"\n  --- 3. Tank Mass (Sec VIII) ---")
+        print(f"    Total Tank Mass: {m_tanks:,.1f} kg (K={stage_params.tank_correction_factor_K})")
+
+        # --- 4. Summary ---
+        m_inert_stage_only = m_tanks  # (In a real model, this would include structures, avionics, etc.)
+        total_engine_mass = engine_mass_kg * stage_params.num_engines
+        m_inert_total = m_inert_stage_only + total_engine_mass + stage_params.payload_mass_kg
+        m_gross = m_inert_total + m_prop
+        
+        # This is the 'delta' calculated from our model
+        final_delta = (m_inert_total - stage_params.payload_mass_kg) / m_gross
+
+        print("-" * 70)
+        print("  --- PRELIMINARY MASS SUMMARY ---")
+        print(f"    Propellant Mass (M_p):   {m_prop:15,.1f} kg")
+        print(f"    Engine Mass (N={stage_params.num_engines}):      {total_engine_mass:15,.1f} kg")
+        print(f"    Tank Mass:               {m_tanks:15,.1f} kg")
+        print(f"    Payload Mass:            {stage_params.payload_mass_kg:15,.1f} kg")
+        print(f"    -------------------------------------")
+        print(f"    GROSS MASS (M_o):        {m_gross:15,.1f} kg")
+        print(f"    Inert / Gross (delta):   {final_delta:15.4f} (vs initial {stage_params.initial_delta:.4f})")
+
+
+    except Exception as e:
+        print(f"  ERROR during full stage analysis: {e}")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
     """
     Standalone runner for the Tizon/RemA model.
-    (Следует принципу zandbergen_engine.py)
-
-    NOTE: This is intended for structured testing via `main.py`.
-    Running this file directly will fail due to relative imports
-    (e.g., `from .common_params ...`).
     """
 
     # --- 1. CONFIGURE TEST RUN ---
-    # Set this variable to a specific engine key (e.g., "ssme", "rd120") to test ONLY that one engine.
-    # Set to None to test ALL available engines.
-    SPECIFIC_ENGINE_KEY_TO_TEST = "default"
-    # Example to test only SSME:
-    # SPECIFIC_ENGINE_KEY_TO_TEST = "ssme"
+    # This runs the ENGINE-ONLY analysis
+    SPECIFIC_ENGINE_KEY_TO_TEST = "default" # e.g., "ssme", "rd120", "default", or None for all
+    
+    # This runs the FULL-STAGE analysis (Engine + Propellant + Tanks)
+    # Set to 'True' to run the full stage demo
+    RUN_FULL_STAGE_DEMO = True
 
     # --- 2. Find all available engine getter functions ---
     available_engines = {}
@@ -587,7 +829,6 @@ if __name__ == "__main__":
             print(f"[__main__] Mode: Testing SPECIFIC engine: '{SPECIFIC_ENGINE_KEY_TO_TEST}'")
             keys_to_test = [SPECIFIC_ENGINE_KEY_TO_TEST]
         else:
-            # Error: The specified key doesn't exist
             print(f"[__main__] ERROR: Specific engine key '{SPECIFIC_ENGINE_KEY_TO_TEST}' not found.")
             print(f"[__main__] Available keys are: {list(available_engines.keys())}")
     else:
@@ -595,7 +836,7 @@ if __name__ == "__main__":
         print(f"[__main__] Mode: Testing ALL {len(available_engines)} engines.")
         keys_to_test = list(available_engines.keys())
 
-    # --- 4. Loop and run analysis for each engine ---
+    # --- 4. Loop and run ENGINE-ONLY analysis ---
     if not keys_to_test:
         if not SPECIFIC_ENGINE_KEY_TO_TEST:
             print("[__main__] No engine getter functions found in vehicle_definitions.py.")
@@ -612,9 +853,19 @@ if __name__ == "__main__":
             run_single_engine_analysis(engine_params)
         except Exception as e:
             print(f"\n[__main__] ERROR processing engine '{engine_key}': {e}")
+    
+    print("-" * 70)
+
+    # --- 5. Run FULL STAGE analysis (using default_rocket_params) ---
+    if RUN_FULL_STAGE_DEMO:
+        print("\n[__main__] Loading parameters for 'default_rocket_params'...")
+        try:
+            # Get the (engine, stage) tuple
+            e_params, s_params = vehicle_definitions.default_rocket_params()
+            # Run the new full stage analysis
+            run_full_stage_analysis(e_params, s_params)
+        except Exception as e:
+            print(f"\n[__main__] ERROR processing 'default_rocket_params': {e}")
 
     print("-" * 70)
-    if keys_to_test:
-        print(f"[__main__] Standalone analysis complete for {len(keys_to_test)} engine(s).")
-    else:
-        print("[__main__] No analysis was run.")
+    print("[__main__] Standalone analysis complete.")
