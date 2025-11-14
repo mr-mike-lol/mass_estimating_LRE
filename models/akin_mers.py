@@ -900,7 +900,7 @@ if __name__ == "__main__":
         results = run_akin_ssto_example(engine_params, stage_params)
 
         # 3. Print the formatted results
-        # Options: pass_num=1, 2, 3
+        # Options: pass_num=1, 2, 3; show_pdf_ref = True to enable ssto_default_params
         print_ssto_results(results, pass_num = 2, show_pdf_ref=True)
 
     except Exception as e:

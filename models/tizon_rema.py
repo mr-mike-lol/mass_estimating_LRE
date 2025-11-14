@@ -1,21 +1,40 @@
 # models/tizon_rema.py
 
+"""
+Implements the dimensionless engine mass model from Tizón & Román, 2017.
+
+This model estimates engine mass by scaling the mass of each component
+relative to a reference engine (SSME, LE-5, or RL10A) based on a set of
+dimensionless parameter ratios.
+
+[cite_start]Core Equation (Eq. 8 in the paper)[cite: 266]:
+m_engine / m_engine_0 = SUM( alpha_i * (m_i / m_i_0) )
+
+where:
+- [cite_start]m_i / m_i_0 = PROD( (P_j / P_j_0) ^ a_ij )  (Eq. 7) [cite: 263]
+- [cite_start]alpha_i: Mass fraction coefficients (Tables 5 & 6) [cite: 618, 620]
+- [cite_start]a_ij: Exponents (Tables 2 & 3) [cite: 603, 605]
+- P_j: Engine parameters (Pc, m_dot, rt, etc.)
+
+Reference:
+Tizón, J. M., & Román, A. (2017). "A Mass Model for Liquid Propellant
+Rocket Engines." [cite_start]53rd AIAA/SAE/ASEE Joint Propulsion Conference. [cite: 16, 239]
+"""
+
 import math
 from .common_params import EngineParams, CycleType
-from typing import Literal, Dict
+from typing import Literal, Dict, Any
+from vehicle_definitions import G0
 
-# --- Глобальная константа ---
-G0 = 9.80665  # Стандартное ускорение свободного падения, м/с^2
-
-# --- 1. Данные эталонных двигателей ---
-# [cite_start]Источник: Tizón & Román, 2017, Table 7 [cite: 2378]
-REFERENCE_ENGINES = {
+# --- 1. Reference Engine Data ---
+# [cite_start]Source: Tizón & Román, 2017, Table 7 [cite: 641]
+REFERENCE_ENGINES: Dict[str, Dict[str, Any]] = {
     "SC": {
         "name": "SSME",
         "mass_kg": 3177.0,
         "thrust_vac_N": 2_280_000.0,
         "pc_Pa": 2.04e7,
-        "rt_m": 0.138,  # Используется для расчета (rt/rt0)
+        "rt_m": 0.138,  # Throat radius
         "m_dot_kg_s": 512.6,
         "of_ratio": 6.0,
         "expansion_ratio": 77.5,
@@ -50,22 +69,24 @@ REFERENCE_ENGINES = {
         "oxidizer_density": 1140.0
     }
 }
-# Добавим объемную плотность и m_dot (если не задан) в эталонные данные
-for engine in REFERENCE_ENGINES.values():
+# [cite_start]--- End of [cite: 641] data ---
+
+# Add bulk density and m_dot (if not specified) to reference data
+for _cycle, engine in REFERENCE_ENGINES.items():
     engine['bulk_density'] = (1.0 + engine['of_ratio']) / \
                              ((1.0 / engine['fuel_density']) + (engine['of_ratio'] / engine['oxidizer_density']))
-    if 'm_dot_kg_s' not in engine:
+    if 'm_dot_kg_s' not in engine and 'isp_vac_s' in engine:
         engine['m_dot_kg_s'] = engine['thrust_vac_N'] / (engine['isp_vac_s'] * G0)
 
-# --- 2. Коэффициенты долей массы (Alpha_i) ---
-# [cite_start]Источник: Tizón & Román, 2017, Table 5 (Design) [cite: 2355]
-ALPHAS_DESIGN = {
+# --- 2. Mass Fraction Coefficients (Alpha_i) ---
+# [cite_start]Source: Tizón & Román, 2017, Table 5 (Design) [cite: 618]
+ALPHAS_DESIGN: Dict[str, Dict[str, float]] = {
     "SC": {
         "tubes": 0.0640, "manifold": 0.1717, "jacket": 0.0470,
         "combustion_chamber": 0.1137, "gas_generator": 0.0551,
         "ox_turbopump": 0.1089, "fuel_turbopump": 0.1407,
         "ox_valve": 0.0698, "fuel_valve": 0.0690
-        # "radiative_nozzle" не используется, т.к. SSME регенеративный
+        # "radiative_nozzle" is 0, SSME is regenerative
     },
     "GG": {
         "tubes": 0.0987, "manifold": 0.0146, "jacket": 0.0589,
@@ -75,14 +96,14 @@ ALPHAS_DESIGN = {
     },
     "EX": {
         "tubes": 0.0629, "manifold": 0.2301, "jacket": 0.0210,
-        "combustion_chamber": 0.2007, "gas_generator": 0.0,  # У экспандера нет ГГ
+        "combustion_chamber": 0.2007, "gas_generator": 0.0,  # Expander has no GG
         "ox_turbopump": 0.1411, "fuel_turbopump": 0.1411,
         "ox_valve": 0.0202, "fuel_valve": 0.0185
     }
 }
 
-# [cite_start]Источник: Tizón & Román, 2017, Table 6 (Historical) [cite: 2357]
-ALPHAS_HISTORICAL = {
+# [cite_start]Source: Tizón & Román, 2017, Table 6 (Historical) [cite: 620]
+ALPHAS_HISTORICAL: Dict[str, Dict[str, float]] = {
     "SC": {
         "combustion_chamber": 0.0670, "ox_turbopump": 0.1044, "fuel_turbopump": 0.1346,
         "ox_valve": 0.0513, "fuel_valve": 0.0510, "structure": 0.1220, "auxiliary": 0.0380
@@ -97,10 +118,10 @@ ALPHAS_HISTORICAL = {
     }
 }
 
-# --- 3. Степенные показатели (a_ij) ---
-# [cite_start]Источник: Tizón & Román, 2017, Table 2 (Design) [cite: 2340]
-# Ключи: pc, expansion_ratio, rt, m_dot_prop, prop_density
-EXPONENTS_DESIGN = {
+# --- 3. Parameter Exponents (a_ij) ---
+# [cite_start]Source: Tizón & Román, 2017, Table 2 (Design) [cite: 603]
+# Keys: pc, expansion_ratio, rt, m_dot_prop, prop_density
+EXPONENTS_DESIGN: Dict[str, Dict[str, float]] = {
     "tubes": {"pc": 1.0, "expansion_ratio": 1.0, "rt": 2.0, "m_dot_prop": 0.0, "prop_density": 0.0},
     "manifold": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 1.0, "m_dot_prop": 1.0, "prop_density": -1.0},
     "jacket": {"pc": 1.0, "expansion_ratio": 1.5, "rt": 3.0, "m_dot_prop": 0.0, "prop_density": 0.0},
@@ -112,8 +133,11 @@ EXPONENTS_DESIGN = {
     "fuel_valve": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 1.0, "prop_density": -1.0},
 }
 
-# [cite_start]Источник: Tizón & Román, 2017, Table 3 (Historical) [cite: 2341]
-EXPONENTS_HISTORICAL = {
+# [cite_start]Source: Tizón & Román, 2017, Table 3 (Historical) [cite: 605]
+# Note: The paper lists "Turbo-pump" and "Valve" generically, but the
+# alphas in Table 6 are split. We apply the generic exponents to both
+# ox/fuel components for the historical method.
+EXPONENTS_HISTORICAL: Dict[str, Dict[str, float]] = {
     "combustion_chamber": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 1.4, "m_dot_prop": 0.0, "prop_density": 0.0},
     "ox_turbopump": {"pc": 0.53, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.53, "prop_density": -0.53},
     "fuel_turbopump": {"pc": 0.53, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.53, "prop_density": -0.53},
@@ -126,26 +150,21 @@ EXPONENTS_HISTORICAL = {
 
 class TizonEngineModel:
     """
-    Реализует безразмерную модель массы из статьи Tizón & Román, 2017.
+    [cite_start]Implements the dimensionless mass model from Tizón & Román, 2017. [cite: 239, 266]
 
-    Эта модель оценивает массу двигателя путем масштабирования массы
-    каждого компонента относительно эталонного двигателя (SSME, LE-5,
-    или RL10A) на основе набора безразмерных соотношений параметров.
-
-    Reference:
-    A Mass Model for Liquid Propellant Rocket Engines (Tizón & Román, 2017).
-    [cite_start][cite: 1737-2648]
+    This class estimates engine mass by scaling component masses relative
+    to a cycle-specific reference engine.
     """
 
     def __init__(self, cycle_type: CycleType, method: Literal["design", "historical"] = "historical"):
         """
-        Инициализирует модель с заданным типом цикла и методом расчета.
+        Initializes the model for a specific cycle type and calculation method.
 
         Args:
-            cycle_type (CycleType): 'GG', 'SC', или 'EX'.
+            cycle_type (CycleType): The engine cycle ('GG', 'SC', or 'EX').
             method (Literal["design", "historical"]):
-                - 'design': использует показатели из Таблицы 2.
-                - 'historical': использует показатели из Таблицы 3.
+                - [cite_start]'design': Uses exponents from Table 2 (design-based). [cite: 603]
+                - [cite_start]'historical': Uses exponents from Table 3 (historical data regression). [cite: 605]
         """
         if cycle_type not in REFERENCE_ENGINES:
             raise ValueError(f"Cycle type {cycle_type} not supported by Tizon model.")
@@ -153,11 +172,11 @@ class TizonEngineModel:
         self.cycle_type = cycle_type
         self.method = method
 
-        # 1. Выбор эталонного двигателя
+        # 1. Select the reference engine
         self.ref_engine = REFERENCE_ENGINES[cycle_type]
         self.ref_mass_kg = self.ref_engine["mass_kg"]
 
-        # 2. Выбор коэффициентов Alpha
+        # 2. Select the alpha coefficients
         if method == "design":
             self.alphas = ALPHAS_DESIGN[cycle_type]
             self.exponents = EXPONENTS_DESIGN
@@ -167,21 +186,25 @@ class TizonEngineModel:
 
     def _calculate_param_ratios(self, params: EngineParams) -> Dict[str, float]:
         """
-        Рассчитывает соотношения (P_j / P_j_0) для всех
-        параметров, используемых в модели.
+        Calculates the ratios (P_j / P_j_0) for all parameters
+        used in the model.
         """
 
-        # Рассчитываем производные параметры для 'params'
+        # Calculate derived parameters for the 'new' engine
         m_dot_new = params.thrust_vac_N / (params.isp_vac_s * G0)
         bulk_density_new = params.bulk_density
 
-        # Прокси-соотношение для радиуса горловины (rt)
-        # (rt/rt0)^2 = (At/At0) ~ (F/pc) / (F0/pc0)
+        # --- Throat Radius (rt) Proxy Ratio ---
+        # The model requires (rt / rt_0). Since EngineParams does not provide
+        # rt, we must estimate it.
+        # From F ~ Pc * At, we get At ~ F / Pc.
+        # Since At = pi * rt^2, we have (rt/rt0)^2 = (At/At0) ~ (F/Pc) / (F0/Pc0).
+        # This proxy is used in place of a direct rt measurement.
         rt_ratio_sq_proxy = (params.thrust_vac_N / params.chamber_pressure_Pa) / \
                             (self.ref_engine["thrust_vac_N"] / self.ref_engine["pc_Pa"])
+        rt_ratio_proxy = rt_ratio_sq_proxy ** 0.5
 
-        # Соотношения для ТНА и клапанов зависят от m_dot и плотности
-        # каждого компонента (окислителя или горючего)
+        # Ratios for 'design' method (split turbopumps/valves)
         of_new = params.mixture_ratio
         of_ref = self.ref_engine['of_ratio']
 
@@ -191,61 +214,64 @@ class TizonEngineModel:
         m_dot_ox_ref = self.ref_engine['m_dot_kg_s'] * (of_ref / (1.0 + of_ref))
         m_dot_fuel_ref = self.ref_engine['m_dot_kg_s'] * (1.0 / (1.0 + of_ref))
 
+        # Prevent division by zero if ref flow is zero (e.g., placeholder)
+        m_dot_ox_ref = m_dot_ox_ref if m_dot_ox_ref != 0 else 1.0
+        m_dot_fuel_ref = m_dot_fuel_ref if m_dot_fuel_ref != 0 else 1.0
+
         return {
             "pc": params.chamber_pressure_Pa / self.ref_engine["pc_Pa"],
             "expansion_ratio": params.expansion_ratio / self.ref_engine["expansion_ratio"],
-            "rt": rt_ratio_sq_proxy ** 0.5,
+            "rt": rt_ratio_proxy,
 
-            # Для "design" модели с раздельными ТНА/клапанами
+            # For 'design' model with split components
             "m_dot_ox": m_dot_ox_new / m_dot_ox_ref,
             "m_dot_fuel": m_dot_fuel_new / m_dot_fuel_ref,
             "density_ox": params.oxidizer_density / self.ref_engine["oxidizer_density"],
             "density_fuel": params.fuel_density / self.ref_engine["fuel_density"],
 
-            # Для "historical" модели с общими ТНА/клапанами
+            # For 'historical' model with bulk components
             "m_dot_prop": m_dot_new / self.ref_engine["m_dot_kg_s"],
             "prop_density": bulk_density_new / self.ref_engine["bulk_density"],
         }
 
     def _calculate_component_ratio(self, component: str, param_ratios: Dict[str, float]) -> float:
         """
-        Рассчитывает (m_i / m_i_0) для одного компонента, используя Eq. (7).
+        Calculates the (m_i / m_i_0) ratio for a single component using Eq. (7)[cite_start]. [cite: 263]
 
         Args:
-            component (str): Название компонента (например, 'combustion_chamber').
-            param_ratios (Dict[str, float]): Предварительно рассчитанные соотношения P_j/P_j_0.
+            component (str): The name of the component (e.g., 'combustion_chamber').
+            param_ratios (Dict[str, float]): Pre-calculated P_j/P_j_0 ratios.
 
         Returns:
-            float: (m_i / m_i_0)
+            float: The (m_i / m_i_0) ratio.
         """
 
         if component not in self.exponents:
-            # Компонент присутствует в Alphas, но не в Exponents
-            # (например, 'radiative_nozzle' в 'design')
+            # Component is in Alphas but not Exponents (e.g., 'radiative_nozzle')
             return 1.0
 
         exps = self.exponents[component]
 
-        # Обработка особых случаев для ТНА и клапанов в "design"
+        # Handle split vs. bulk properties for turbopumps and valves
         if self.method == "design":
             if component == "ox_turbopump" or component == "ox_valve":
-                # Использовать m_dot_ox и density_ox
+                # Use oxidizer-specific m_dot and density
                 m_dot_ratio = param_ratios["m_dot_ox"]
                 density_ratio = param_ratios["density_ox"]
             elif component == "fuel_turbopump" or component == "fuel_valve":
-                # Использовать m_dot_fuel и density_fuel
+                # Use fuel-specific m_dot and density
                 m_dot_ratio = param_ratios["m_dot_fuel"]
                 density_ratio = param_ratios["density_fuel"]
             else:
-                # Стандартный m_dot_prop и prop_density
+                # Default to bulk properties (though not used by design TPs/Valves)
                 m_dot_ratio = param_ratios["m_dot_prop"]
                 density_ratio = param_ratios["prop_density"]
         else:  # historical
+            # Historical method uses bulk properties for all components
             m_dot_ratio = param_ratios["m_dot_prop"]
             density_ratio = param_ratios["prop_density"]
 
-        # Рассчитываем произведение, Eq. (7)
-        # (P1/P1_0)^a1 * (P2/P2_0)^a2 * ...
+        # Calculate the product: PROD( (P_j / P_j_0) ^ a_ij )
         ratio = 1.0
         ratio *= (param_ratios["pc"] ** exps.get("pc", 0.0))
         ratio *= (param_ratios["expansion_ratio"] ** exps.get("expansion_ratio", 0.0))
@@ -255,42 +281,42 @@ class TizonEngineModel:
 
         return ratio
 
-    def estimate_total_mass(self, params: EngineParams) -> dict:
+    def estimate_total_mass(self, params: EngineParams) -> Dict[str, Any]:
         """
-        Оценивает общую массу двигателя и ее разбивку по компонентам.
+        Estimates the total engine mass and its component breakdown.
 
-        Реализует Eq. (8): m_engine = m_engine_0 * SUM(alpha_i * (m_i / m_i_0))
+        Implements Eq. (8)[cite_start]: m_engine = m_engine_0 * SUM( alpha_i * (m_i / m_i_0) ) [cite: 266]
 
         Args:
-            params (EngineParams): Параметры нового двигателя для оценки.
+            params (EngineParams): The parameters of the new engine to estimate.
 
         Returns:
-            dict: Словарь, содержащий 'total_mass_kg' и 'components_kg'.
+            dict: A dictionary containing 'total_mass_kg' and 'components_kg'.
         """
 
-        # 1. Рассчитать все соотношения P_j / P_j_0 один раз
+        # 1. Calculate all P_j / P_j_0 ratios once
         param_ratios = self._calculate_param_ratios(params)
 
         total_ratio_sum = 0.0
-        component_masses = {}
+        component_masses: Dict[str, float] = {}
 
-        # 2. Итерация по всем компонентам из таблицы Alphas
+        # 2. Iterate over all components defined in the Alpha table
         for component, alpha_i in self.alphas.items():
             if alpha_i == 0.0:
                 component_masses[component] = 0.0
                 continue
 
-            # 3. Рассчитать m_i / m_i_0 для этого компонента
+            # 3. Calculate (m_i / m_i_0) for this component
             m_i_ratio = self._calculate_component_ratio(component, param_ratios)
 
-            # 4. Добавить в общую сумму (Eq. 8)
+            # 4. Add to the total sum (Eq. 8)
             total_ratio_sum += alpha_i * m_i_ratio
 
-            # 5. Сохранить массу компонента для детализации
+            # 5. Store component mass for breakdown
             # m_i = m_engine_0 * alpha_i * (m_i / m_i_0)
             component_masses[component] = self.ref_mass_kg * alpha_i * m_i_ratio
 
-        # 6. Рассчитать итоговую массу
+        # 6. Calculate final total mass
         total_mass = self.ref_mass_kg * total_ratio_sum
 
         return {

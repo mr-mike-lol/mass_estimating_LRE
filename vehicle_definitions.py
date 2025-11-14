@@ -9,7 +9,7 @@ DENSITY_LOX = 1140.0
 DENSITY_LH2 = 71.0
 DENSITY_RP1 = 820.0  # From Akin (ENAE 791), Page 7 [cite: 1280]
 DENSITY_LCH4 = 820.0
-# Standard gravity for Isp <-> Ve conversion
+# Standard gravity for Isp <-> Ve conversion, m/s^2
 G0 = 9.80665
 
 def get_le5_engine() -> EngineParams:
@@ -315,4 +315,5 @@ def default_rocket_params() -> Tuple[EngineParams, StageParams]:
     )
 
     stage.engine = engine
+
     return engine, stage
