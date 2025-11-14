@@ -1,6 +1,10 @@
 # models/kibbey_stage.py
+"""
+
+"""
 
 from .common_params import EngineParams
+from vehicle_definitions import DENSITY_RP1, DENSITY_LH2, DENSITY_LOX
 
 
 class KibbeyStageModel:
@@ -35,10 +39,9 @@ class KibbeyStageModel:
         self.OF_0 = 2.7  # O/F ratio
         self.FW_ENG_0 = 78.0  # Engine T/W
 
-        # Reference densities (LOX/RP1, from Akin, ENAE 791)
         # These are standard values used for the LOX/RP1 reference.
-        self.RHO_OX_0 = 1140.0  # LOX
-        self.RHO_FU_0 = 820.0  # RP1
+        self.RHO_OX_0 = DENSITY_LOX
+        self.RHO_FU_0 = DENSITY_RP1
 
         # Reference bulk density
         self.RHO_BULK_0 = self._calculate_bulk_density(self.RHO_OX_0, self.RHO_FU_0, self.OF_0)
@@ -143,8 +146,8 @@ class KibbeyStageModel:
         of_new = params.mixture_ratio
 
         # 4. Calculate the numerator and denominator of the load ratio (L/L0)
-        numerator_L_ratio = 1.0 - r_mp_new * (1.0 / (of_new + 1.0))
-        denominator_L_ratio = 1.0 - self.R_MP_0 * (1.0 / (self.OF_0 + 1.0))
+        numerator_L_ratio = 1.0 / r_mp_new - (1.0 / (of_new + 1.0))
+        denominator_L_ratio = 1.0 / self.R_MP_0 - (1.0 / (self.OF_0 + 1.0))
 
         if denominator_L_ratio == 0:
             return 0.0
@@ -195,10 +198,10 @@ class KibbeyStageModel:
 
         return {
             "propellant_mass_fraction": lambda_fraction,
-            "total_inert_fraction": f_i_total,
+            "total_inert_fraction: the stage propellant mass fraction": f_i_total,
             "component_fractions": {
-                "f_i_E_S": f_i_E_S,
-                "f_i_ot": f_i_ot,
-                "f_i_ft": f_i_ft
+                "f_i_E_S: the engine-and-structure inert mass per total propellant mass": f_i_E_S,
+                "f_i_ot: the oxidizer tank inert mass per total propellant mass": f_i_ot,
+                "f_i_ft: the fuel tank inert mass per total propellant mass": f_i_ft
             }
         }
