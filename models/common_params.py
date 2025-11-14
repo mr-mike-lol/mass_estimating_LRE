@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Literal, Optional
+from vehicle_definitions import G0
 
 # Defines specific, allowed string values for propellant and cycle types
 PropellantType = Literal["LOX/LH2", "LOX/RP1", "LOX/LCH4", "Storable"]
@@ -24,6 +25,8 @@ class EngineParams:
         fuel_density (float): Density of the fuel, in kg/m^3.
         oxidizer_density (float): Density of the oxidizer, in kg/m^3.
         num_chambers (int): Number of chambers (for Zandbergen/Tizon models).
+        safety_factor (float): Safety factor (FS). Tizon model (Table 7)
+            uses 1.2 for crewed (SSME)  and 1.1 for expendable (LE-5, RL10A).
     """
     thrust_vac_N: float
     isp_vac_s: float
@@ -39,6 +42,9 @@ class EngineParams:
 
     # Optional parameters for more detailed models
     num_chambers: int = 1
+
+    # Added based on Tizon 2017, Table 7  and p. 15
+    safety_factor: float = 1.1
 
     @property
     def bulk_density(self) -> float:
@@ -119,6 +125,7 @@ class StageParams:
         # We assume engine_mass_kg will be calculated later.
         return self.stage_inert_mass_kg + self.engine_mass_kg
 
+
 @dataclass
 class SolidRocketMotorParams:
     """
@@ -126,7 +133,7 @@ class SolidRocketMotorParams:
     Used as input for SRM-specific MERs.
 
     Reference:
-    [cite_start]MER for casing mass found in Akin (ENAE 791), Page 25[cite: 359, 361].
+    MER for casing mass found in Akin (ENAE 791), Page 25[cite: 359, 361].
 
     Args:
         total_mass_kg (float): Total mass of the motor (casing + propellant).
@@ -155,7 +162,6 @@ class SolidRocketMotorParams:
     @property
     def specific_impulse_s(self) -> float:
         """Calculates the effective specific impulse."""
-        G0 = 9.80665  # Standard gravity
         if self.propellant_mass_kg == 0:
             return 0.0
 

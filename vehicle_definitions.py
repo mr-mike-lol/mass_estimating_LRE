@@ -4,10 +4,10 @@ from models.common_params import EngineParams, StageParams
 from typing import Dict, Any, Tuple
 
 # --- Propellant Density Constants (kg/m^3) ---
-# Using values from Akin (ENAE 791), Page 4 [cite: 1233, 1234]
+# Using values from Akin (ENAE 791), Page 4
 DENSITY_LOX = 1140.0
 DENSITY_LH2 = 71.0
-DENSITY_RP1 = 820.0  # From Akin (ENAE 791), Page 7 [cite: 1280]
+DENSITY_RP1 = 820.0  # From Akin (ENAE 791), Page 7
 DENSITY_LCH4 = 820.0
 # Standard gravity for Isp <-> Ve conversion, m/s^2
 G0 = 9.80665
@@ -23,7 +23,7 @@ def get_le5_engine() -> EngineParams:
     """
     return EngineParams(
         thrust_vac_N=103_000.0,
-        isp_vac_s=450.0,  # Note: Isp not in Table 7, using typical value from Akin [cite: 1214]
+        isp_vac_s=450.0,  # Note: Isp not in Table 7, using typical value from Akin
         chamber_pressure_Pa=3.65e6,
         propellant_type="LOX/LH2",
         cycle_type="GG",
@@ -31,7 +31,8 @@ def get_le5_engine() -> EngineParams:
         expansion_ratio=140.0,
         fuel_density=DENSITY_LH2,
         oxidizer_density=DENSITY_LOX,
-        num_chambers=1
+        num_chambers=1,
+        safety_factor=1.1  # Tizon 2017, p. 15 (non-crewed)
     )
 
 
@@ -54,7 +55,8 @@ def get_ssme_engine() -> EngineParams:
         expansion_ratio=77.5,
         fuel_density=DENSITY_LH2,
         oxidizer_density=DENSITY_LOX,
-        num_chambers=1
+        num_chambers=1,
+        safety_factor=1.2  # Tizon 2017, p. 15 (crewed mission)
     )
 
 
@@ -77,7 +79,8 @@ def get_rl10a_engine() -> EngineParams:
         expansion_ratio=61.1,
         fuel_density=DENSITY_LH2,
         oxidizer_density=DENSITY_LOX,
-        num_chambers=1
+        num_chambers=1,
+        safety_factor=1.1  # Tizon 2017, p. 15 (non-crewed)
     )
 
 
@@ -100,7 +103,8 @@ def get_rd120_engine() -> EngineParams:
         expansion_ratio=106.0,  # Known public value
         fuel_density=DENSITY_RP1,
         oxidizer_density=DENSITY_LOX,
-        num_chambers=1
+        num_chambers=1,
+        safety_factor=1.1  # Assuming non-crewed
     )
 
 
@@ -130,6 +134,7 @@ def get_akin_ssto_default_params_1st() -> Tuple[EngineParams, StageParams]:
         expansion_ratio=30.0,
         fuel_density=DENSITY_LH2,
         oxidizer_density=DENSITY_LOX,
+        safety_factor=1.2 # Assuming crewed SSTO
     )
 
     # Mission & Stage params from Page 3, 22, 27
@@ -270,6 +275,7 @@ def get_default_engine() -> EngineParams:
         expansion_ratio=30.0,
         fuel_density=DENSITY_LCH4,
         oxidizer_density=DENSITY_LOX,
+        safety_factor=1.1  # Tizon 2017, p. 15 (non-crewed)
     )
     return engine
 

@@ -7,18 +7,18 @@ This model estimates engine mass by scaling the mass of each component
 relative to a reference engine (SSME, LE-5, or RL10A) based on a set of
 dimensionless parameter ratios.
 
-[cite_start]Core Equation (Eq. 8 in the paper)[cite: 266]:
+Core Equation (Eq. 8 in the paper):
 m_engine / m_engine_0 = SUM( alpha_i * (m_i / m_i_0) )
 
 where:
-- [cite_start]m_i / m_i_0 = PROD( (P_j / P_j_0) ^ a_ij )  (Eq. 7) [cite: 263]
-- [cite_start]alpha_i: Mass fraction coefficients (Tables 5 & 6) [cite: 618, 620]
-- [cite_start]a_ij: Exponents (Tables 2 & 3) [cite: 603, 605]
+- m_i / m_i_0 = PROD( (P_j / P_j_0) ^ a_ij )  (Eq. 7)
+- alpha_i: Mass fraction coefficients (Tables 5 & 6) [cite: 618, 620]
+- a_ij: Exponents (Tables 2 & 3) [cite: 603, 605]
 - P_j: Engine parameters (Pc, m_dot, rt, etc.)
 
 Reference:
 Tizón, J. M., & Román, A. (2017). "A Mass Model for Liquid Propellant
-Rocket Engines." [cite_start]53rd AIAA/SAE/ASEE Joint Propulsion Conference. [cite: 16, 239]
+Rocket Engines." 53rd AIAA/SAE/ASEE Joint Propulsion Conference. [cite: 16, 239]
 """
 
 import math
@@ -27,7 +27,7 @@ from typing import Literal, Dict, Any
 from vehicle_definitions import G0
 
 # --- 1. Reference Engine Data ---
-# [cite_start]Source: Tizón & Román, 2017, Table 7 [cite: 641]
+# Source: Tizón & Román, 2017, Table 7
 REFERENCE_ENGINES: Dict[str, Dict[str, Any]] = {
     "SC": {
         "name": "SSME",
@@ -40,7 +40,8 @@ REFERENCE_ENGINES: Dict[str, Dict[str, Any]] = {
         "expansion_ratio": 77.5,
         "prop_type": "LOX/LH2",
         "fuel_density": 71.0,
-        "oxidizer_density": 1140.0
+        "oxidizer_density": 1140.0,
+        "fs": 1.2  # Safety Factor, p. 15 (crewed)
     },
     "GG": {
         "name": "LE-5",
@@ -53,7 +54,8 @@ REFERENCE_ENGINES: Dict[str, Dict[str, Any]] = {
         "expansion_ratio": 140.0,
         "prop_type": "LOX/LH2",
         "fuel_density": 71.0,
-        "oxidizer_density": 1140.0
+        "oxidizer_density": 1140.0,
+        "fs": 1.1  # Safety Factor, p. 15 (non-crewed)
     },
     "EX": {
         "name": "RL10A-3-A",
@@ -66,10 +68,10 @@ REFERENCE_ENGINES: Dict[str, Dict[str, Any]] = {
         "expansion_ratio": 61.1,
         "prop_type": "LOX/LH2",
         "fuel_density": 71.0,
-        "oxidizer_density": 1140.0
+        "oxidizer_density": 1140.0,
+        "fs": 1.1  # Safety Factor, p. 15 (non-crewed)
     }
 }
-# [cite_start]--- End of [cite: 641] data ---
 
 # Add bulk density and m_dot (if not specified) to reference data
 for _cycle, engine in REFERENCE_ENGINES.items():
@@ -79,7 +81,7 @@ for _cycle, engine in REFERENCE_ENGINES.items():
         engine['m_dot_kg_s'] = engine['thrust_vac_N'] / (engine['isp_vac_s'] * G0)
 
 # --- 2. Mass Fraction Coefficients (Alpha_i) ---
-# [cite_start]Source: Tizón & Román, 2017, Table 5 (Design) [cite: 618]
+# Source: Tizón & Román, 2017, Table 5 (Design) [cite: 618]
 ALPHAS_DESIGN: Dict[str, Dict[str, float]] = {
     "SC": {
         "tubes": 0.0640, "manifold": 0.1717, "jacket": 0.0470,
@@ -102,7 +104,7 @@ ALPHAS_DESIGN: Dict[str, Dict[str, float]] = {
     }
 }
 
-# [cite_start]Source: Tizón & Román, 2017, Table 6 (Historical) [cite: 620]
+# Source: Tizón & Román, 2017, Table 6 (Historical) [cite: 620]
 ALPHAS_HISTORICAL: Dict[str, Dict[str, float]] = {
     "SC": {
         "combustion_chamber": 0.0670, "ox_turbopump": 0.1044, "fuel_turbopump": 0.1346,
@@ -119,38 +121,38 @@ ALPHAS_HISTORICAL: Dict[str, Dict[str, float]] = {
 }
 
 # --- 3. Parameter Exponents (a_ij) ---
-# [cite_start]Source: Tizón & Román, 2017, Table 2 (Design) [cite: 603]
-# Keys: pc, expansion_ratio, rt, m_dot_prop, prop_density
+# Source: Tizón & Román, 2017, Table 2 (Design)
+# Keys: pc, expansion_ratio, rt, m_dot_prop, prop_density, rho_mat, sigma_y, fs exponents from Table 2.
 EXPONENTS_DESIGN: Dict[str, Dict[str, float]] = {
-    "tubes": {"pc": 1.0, "expansion_ratio": 1.0, "rt": 2.0, "m_dot_prop": 0.0, "prop_density": 0.0},
-    "manifold": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 1.0, "m_dot_prop": 1.0, "prop_density": -1.0},
-    "jacket": {"pc": 1.0, "expansion_ratio": 1.5, "rt": 3.0, "m_dot_prop": 0.0, "prop_density": 0.0},
-    "combustion_chamber": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 2.0, "m_dot_prop": 0.0, "prop_density": 0.0},
-    "gas_generator": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 2.0, "m_dot_prop": 0.0, "prop_density": 0.0},
-    "ox_turbopump": {"pc": 0.15, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.9, "prop_density": -0.45},
-    "fuel_turbopump": {"pc": 0.15, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.9, "prop_density": -0.45},
-    "ox_valve": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 1.0, "prop_density": -1.0},
-    "fuel_valve": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 1.0, "prop_density": -1.0},
+    "tubes": {"pc": 1.0, "expansion_ratio": 1.0, "rt": 2.0, "m_dot_prop": 0.0, "prop_density": 0.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "manifold": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 1.0, "m_dot_prop": 1.0, "prop_density": -1.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "jacket": {"pc": 1.0, "expansion_ratio": 1.5, "rt": 3.0, "m_dot_prop": 0.0, "prop_density": 0.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "combustion_chamber": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 2.0, "m_dot_prop": 0.0, "prop_density": 0.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "gas_generator": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 2.0, "m_dot_prop": 0.0, "prop_density": 0.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "ox_turbopump": {"pc": 0.15, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.9, "prop_density": -0.45, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "fuel_turbopump": {"pc": 0.15, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.9, "prop_density": -0.45, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "ox_valve": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 1.0, "prop_density": -1.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "fuel_valve": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 1.0, "prop_density": -1.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
 }
 
-# [cite_start]Source: Tizón & Román, 2017, Table 3 (Historical) [cite: 605]
+# Source: Tizón & Román, 2017, Table 3 (Historical)
 # Note: The paper lists "Turbo-pump" and "Valve" generically, but the
 # alphas in Table 6 are split. We apply the generic exponents to both
-# ox/fuel components for the historical method.
+# ox/fuel components for the historical method., rho_mat, sigma_y, fs exponents from Table 3.
 EXPONENTS_HISTORICAL: Dict[str, Dict[str, float]] = {
-    "combustion_chamber": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 1.4, "m_dot_prop": 0.0, "prop_density": 0.0},
-    "ox_turbopump": {"pc": 0.53, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.53, "prop_density": -0.53},
-    "fuel_turbopump": {"pc": 0.53, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.53, "prop_density": -0.53},
-    "ox_valve": {"pc": 0.3, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.625, "prop_density": -0.625},
-    "fuel_valve": {"pc": 0.3, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.625, "prop_density": -0.625},
-    "structure": {"pc": 0.92, "expansion_ratio": 0.0, "rt": 1.84, "m_dot_prop": 0.0, "prop_density": 0.0},
-    "auxiliary": {"pc": 0.0, "expansion_ratio": 0.0, "rt": 1.0, "m_dot_prop": 0.0, "prop_density": 0.0},
+    "combustion_chamber": {"pc": 1.0, "expansion_ratio": 0.0, "rt": 1.4, "m_dot_prop": 0.0, "prop_density": 0.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "ox_turbopump": {"pc": 0.53, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.53, "prop_density": -0.53, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "fuel_turbopump": {"pc": 0.53, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.53, "prop_density": -0.53, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "ox_valve": {"pc": 0.3, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.625, "prop_density": -0.625, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "fuel_valve": {"pc": 0.3, "expansion_ratio": 0.0, "rt": 0.0, "m_dot_prop": 0.625, "prop_density": -0.625, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "structure": {"pc": 0.92, "expansion_ratio": 0.0, "rt": 1.84, "m_dot_prop": 0.0, "prop_density": 0.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
+    "auxiliary": {"pc": 0.0, "expansion_ratio": 0.0, "rt": 1.0, "m_dot_prop": 0.0, "prop_density": 0.0, "rho_mat": 1.0, "sigma_y": -1.0, "fs": 1.0},
 }
 
 
 class TizonEngineModel:
     """
-    [cite_start]Implements the dimensionless mass model from Tizón & Román, 2017. [cite: 239, 266]
+    Implements the dimensionless mass model from Tizón & Román, 2017. [cite: 239, 266]
 
     This class estimates engine mass by scaling component masses relative
     to a cycle-specific reference engine.
@@ -163,8 +165,8 @@ class TizonEngineModel:
         Args:
             cycle_type (CycleType): The engine cycle ('GG', 'SC', or 'EX').
             method (Literal["design", "historical"]):
-                - [cite_start]'design': Uses exponents from Table 2 (design-based). [cite: 603]
-                - [cite_start]'historical': Uses exponents from Table 3 (historical data regression). [cite: 605]
+                - 'design': Uses exponents from Table 2 (design-based).
+                - 'historical': Uses exponents from Table 3 (historical data regression).
         """
         if cycle_type not in REFERENCE_ENGINES:
             raise ValueError(f"Cycle type {cycle_type} not supported by Tizon model.")
@@ -200,6 +202,7 @@ class TizonEngineModel:
         # From F ~ Pc * At, we get At ~ F / Pc.
         # Since At = pi * rt^2, we have (rt/rt0)^2 = (At/At0) ~ (F/Pc) / (F0/Pc0).
         # This proxy is used in place of a direct rt measurement.
+        # An alternative from Eq (12) [cite: 361] would be (m*c* / Pc), but c* is unknown.
         rt_ratio_sq_proxy = (params.thrust_vac_N / params.chamber_pressure_Pa) / \
                             (self.ref_engine["thrust_vac_N"] / self.ref_engine["pc_Pa"])
         rt_ratio_proxy = rt_ratio_sq_proxy ** 0.5
@@ -222,6 +225,17 @@ class TizonEngineModel:
             "pc": params.chamber_pressure_Pa / self.ref_engine["pc_Pa"],
             "expansion_ratio": params.expansion_ratio / self.ref_engine["expansion_ratio"],
             "rt": rt_ratio_proxy,
+            "fs": params.safety_factor / self.ref_engine["fs"],
+
+            # --- Material Property Ratios ---
+            # These parameters are in the Tizon model (Tables 2 & 3) [cite: 603, 605]
+            # but require a full component material database based on Table 8.
+            # The paper does not provide numeric density/yield values for
+            # the reference materials (e.g., Inconel 718).
+            # We assume a 1.0 ratio (same materials) for this implementation.
+            # A future update could allow the user to pass these ratios in.
+            "rho_mat": 1.0,
+            "sigma_y": 1.0,
 
             # For 'design' model with split components
             "m_dot_ox": m_dot_ox_new / m_dot_ox_ref,
@@ -236,7 +250,7 @@ class TizonEngineModel:
 
     def _calculate_component_ratio(self, component: str, param_ratios: Dict[str, float]) -> float:
         """
-        Calculates the (m_i / m_i_0) ratio for a single component using Eq. (7)[cite_start]. [cite: 263]
+        Calculates the (m_i / m_i_0) ratio for a single component using Eq. (7).
 
         Args:
             component (str): The name of the component (e.g., 'combustion_chamber').
@@ -272,6 +286,7 @@ class TizonEngineModel:
             density_ratio = param_ratios["prop_density"]
 
         # Calculate the product: PROD( (P_j / P_j_0) ^ a_ij )
+        # Uses all exponents from Tizon 2017, Tables 2 & 3 [cite: 603, 605]
         ratio = 1.0
         ratio *= (param_ratios["pc"] ** exps.get("pc", 0.0))
         ratio *= (param_ratios["expansion_ratio"] ** exps.get("expansion_ratio", 0.0))
@@ -279,13 +294,18 @@ class TizonEngineModel:
         ratio *= (m_dot_ratio ** exps.get("m_dot_prop", 0.0))
         ratio *= (density_ratio ** exps.get("prop_density", 0.0))
 
+        # Add material property ratios
+        ratio *= (param_ratios["rho_mat"] ** exps.get("rho_mat", 0.0))
+        ratio *= (param_ratios["sigma_y"] ** exps.get("sigma_y", 0.0))
+        ratio *= (param_ratios["fs"] ** exps.get("fs", 0.0))
+
         return ratio
 
     def estimate_total_mass(self, params: EngineParams) -> Dict[str, Any]:
         """
         Estimates the total engine mass and its component breakdown.
 
-        Implements Eq. (8)[cite_start]: m_engine = m_engine_0 * SUM( alpha_i * (m_i / m_i_0) ) [cite: 266]
+        Implements Eq. (8): m_engine = m_engine_0 * SUM( alpha_i * (m_i / m_i_0) )
 
         Args:
             params (EngineParams): The parameters of the new engine to estimate.
