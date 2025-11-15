@@ -207,13 +207,15 @@ class MotaSchlingloffModel(BaseEngineModel):
 
         # --- 2. Determine model constants based on inputs ---
 
-        # C_propellant: 0.19 (high energetic), 0.11 (low energetic) [cite: 231]
+        # C_propellant: 0.19 (high energetic), 0.11 (low energetic)
         if params.propellant_type == "LOX/LH2":
             c_propellant = 0.19
+            app_note = "Analytical-statistical model. High-energy props (LOX/LH2)"
         else:
             c_propellant = 0.11  # For LOX/RP1, LOX/LCH4, Storable
+            app_note = "Analytical-statistical model. Low-energy props (LOX/RP1, LCH4, etc.)"
 
-        # C_tp: 0.5 (boost-pumps), 1.0 (no boost-pumps) [cite: 231]
+        # C_tp: 0.5 (boost-pumps), 1.0 (no boost-pumps)
         c_tp = 0.5 if self.has_boost_pumps else 1.0
 
         # C_nozzle: 1.0 (regenerative), 0.0 (dump cooling) [cite: 232]
@@ -244,6 +246,7 @@ class MotaSchlingloffModel(BaseEngineModel):
             total_mass_kg=total_mass,
             components_kg=components,
             notes={
+                "Applicability": app_note,
                 "correction_factor": correction_factor,
                 "c_propellant": c_propellant,
                 "c_tp": c_tp,

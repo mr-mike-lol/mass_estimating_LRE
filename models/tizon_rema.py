@@ -57,7 +57,7 @@ from typing import Literal, Dict, Any, Optional
 
 # Import from root (for constants and test functions)
 import vehicle_definitions
-from vehicle_definitions import (
+from models.common_params import (
     DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4, G0
 )
 
@@ -510,7 +510,8 @@ class TizonEngineModel(BaseEngineModel):
             components_kg=component_masses,
             notes={
                 "method": self.method,
-                "reference_engine": self.ref_engine["name"]
+                "reference_engine": self.ref_engine["name"],
+                "Applicability": f"Only for {params.cycle_type} cycle engines (scaling from {self.ref_engine['name']})."
             }
         )
 

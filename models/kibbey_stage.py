@@ -35,7 +35,9 @@ Cons:
 """
 
 from models.common_params import EngineParams, StageParams
-from vehicle_definitions import DENSITY_RP1, DENSITY_LOX
+from models.common_params import (
+    DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4, G0
+)
 from models.base import BaseStageModel, StageModelResult
 from typing import Dict, Any
 

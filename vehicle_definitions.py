@@ -2,15 +2,9 @@
 
 from models.common_params import EngineParams, StageParams
 from typing import Dict, Any, Tuple
-
-# --- Propellant Density Constants (kg/m^3) ---
-# Using values from Akin (ENAE 791), Page 4
-DENSITY_LOX = 1140.0
-DENSITY_LH2 = 71.0
-DENSITY_RP1 = 820.0  # From Akin (ENAE 791), Page 7
-DENSITY_LCH4 = 820.0
-# Standard gravity for Isp <-> Ve conversion, m/s^2
-G0 = 9.80665
+from models.common_params import (
+    DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4, G0
+)
 
 def get_le5_engine() -> EngineParams:
     """

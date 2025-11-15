@@ -200,6 +200,12 @@ class ZandbergenEngineModel(BaseEngineModel):
         # Store the method that was actually used (resolving "default")
         self._method_used = method_used
 
+        # Add applicability note based on prop type
+        if prop_type == "LOX/LH2":
+            app_note = "Simple regression (Thrust + prop class). Monolithic for LOX/LH2 engines"
+        else:
+            app_note = "Simple regression (Thrust + prop class). Monolithic for Storable, LOX/RP1, or LOX/LCH4 engines"
+
         # Zandbergen is monolithic (no components)
         return ModelResult(
             total_mass_kg=mass,
@@ -207,7 +213,8 @@ class ZandbergenEngineModel(BaseEngineModel):
                 "Monolithic Mass": mass
             },
             notes={
-                "method_used": method_used
+                "method_used": method_used,
+                "Applicability": app_note
             }
         )
 

@@ -3,6 +3,12 @@
 from dataclasses import dataclass
 from typing import Literal, Optional, Dict
 
+# --- Propellant Density Constants (kg/m^3) ---
+# Using values from Akin (ENAE 791), Page 4
+DENSITY_LOX = 1140.0
+DENSITY_LH2 = 71.0
+DENSITY_RP1 = 820.0  # From Akin (ENAE 791), Page 7
+DENSITY_LCH4 = 820.0
 # Standard gravity for Isp <-> Ve conversion, m/s^2
 G0 = 9.80665
 

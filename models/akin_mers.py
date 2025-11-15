@@ -43,10 +43,10 @@ import math
 from typing import Literal, Dict, Tuple, Any
 from models.common_params import EngineParams, StageParams
 from models.base import BaseEngineModel, ModelResult
-from vehicle_definitions import DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, G0
+from models.common_params import (
+    DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4, G0
+)
 import vehicle_definitions
-import inspect
-
 
 # --- Public Interface Class ---
 
@@ -112,7 +112,9 @@ class AkinPropulsionModel(BaseEngineModel):
             components_kg=components,
             notes={
                 "method": "Sum of Engine, Thrust Structure, and Gimbal MERs.",
-                "reference": "Akin (ENAE 791)"
+                "reference": "Akin (ENAE 791)",
+                "Applicability": "Propulsion system components (MERs). Ignores cycle."
+                                 " Universal (all engines), but highly empirical."
             }
         )
 
