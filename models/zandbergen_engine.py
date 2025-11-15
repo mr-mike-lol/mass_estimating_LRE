@@ -57,6 +57,7 @@ of pump fed rocket engines for launch vehicle conceptual design.
 """
 
 from models.common_params import EngineParams
+from models.base import BaseEngineModel, ModelResult
 from typing import Dict, Literal, get_args
 import inspect
 import vehicle_definitions
@@ -79,95 +80,139 @@ DiameterMethod = Literal[
 PA_TO_BAR = 1.0 / 100_000.0
 
 
-def estimate_engine_mass(params: EngineParams, method: MassMethod = "default") -> Dict:
+class ZandbergenEngineModel(BaseEngineModel):
     """
-    Estimates engine mass based on thrust and propellant type using Zandbergen (2015).
-    Returns a dictionary with total mass.
+    Implements the Zandbergen (2015) engine mass model as a class.
 
-    Implements formulas from Table 4.
-    Thrust (THRUST) must be in Newtons.
-
-    Available methods:
-    - Hydro-lox ("LOX/LH2"):
-        - "M-C1" (default): Thrust-based power curve
-        - "M-C2": Thrust-based polynomial
-        - "M-C3": Thrust and cycle type (SC vs. other)
-    - Storable/Kero-lox ("LOX/RP1", "LOX/LCH4", "Storable"):
-        - "M-S1" (default): Thrust-based linear relation
-        - "M-S2": Thrust, num_chambers (NT), and expansion_ratio (EXP)
-
-    Reference:
-    Simple mass and size estimation relationships... (Zandbergen, 2015), Table 4.
-
-    Args:
-        params (EngineParams): The engine's parameter object.
-        method (MassMethod): The specific regression formula ID from Table 4.
-            Defaults to "default", which uses the simplest relation (M-C1 or M-S1).
-
-    Returns:
-        Dict: Dictionary with 'total_mass_kg' and 'components_kg'.
+    This class wraps the statistical regression formulas, allowing the
+    selection of a specific formula (e.g., "M-C1", "M-S2") via the
+    constructor.
     """
-    thrust_N = params.thrust_vac_N
-    prop_type = params.propellant_type
-    mass = 0.0
-    method_used = ""
 
-    if prop_type == "LOX/LH2":
-        # --- Hydro-lox Engines ---
-        if method == "default" or method == "M-C1":
-            # Formula M-C1: M(kg) = 0.00514 * THRUST(N)^0.92068
-            mass = 0.00514 * (thrust_N ** 0.92068)
-            method_used = "M-C1"
+    def __init__(self, method: MassMethod = "default"):
+        """
+        Initializes the model with a specific calculation method.
 
-        elif method == "M-C2":
-            # Formula M-C2: M(kg) = 1.866E-10*THRUST^2 + 0.00130*THRUST + 77.4
-            mass = (1.866e-10 * (thrust_N ** 2)) + (0.00130 * thrust_N) + 77.4
-            method_used = "M-C2"
+        Args:
+            method (MassMethod): The specific regression formula ID
+                from Table 4 (e.g., "M-C1", "M-S1").
+        """
+        self.method = method
+        self._method_used: str = ""  # Internal storage for the method name
 
-        elif method == "M-C3":
-            # Formula M-C3: M(kg) = 1.091E-4*THRUST^1.185 * 1.108^CYCLE + 104.0
-            # CYCLE = 0 for staged combustion (SC), 1 for all other cycles
-            cycle_param = 0.0 if params.cycle_type == "SC" else 1.0
-            mass = (1.091e-4 * (thrust_N ** 1.185) * (1.108 ** cycle_param)) + 104.0
-            method_used = "M-C3"
+    @property
+    def model_name(self) -> str:
+        """Returns the unique, human-readable name of the model."""
+        # The _method_used is set during estimation, so we use it
+        # to provide a more descriptive name.
+        if self._method_used:
+            return f"Zandbergen (2015) - {self._method_used}"
+        return f"Zandbergen (2015) - {self.method}"
+
+    def estimate_mass(self, params: EngineParams) -> ModelResult:
+        """
+        Estimates engine mass based on thrust and propellant type
+        using the method specified in the constructor.
+
+        Implements formulas from Table 4.
+        Thrust (THRUST) must be in Newtons.
+
+        Reference:
+        Simple mass and size estimation relationships... (Zandbergen, 2015), Table 4.
+
+        Args:
+            params (EngineParams): The engine's parameter object.
+
+        Returns:
+            ModelResult: A TypedDict containing the total mass.
+
+        Raises:
+            ValueError: If the method is not valid for the propellant type
+                        or if required parameters (e.g., Ae/At) are missing.
+        """
+        thrust_N = params.thrust_vac_N
+        prop_type = params.propellant_type
+        mass = 0.0
+        method_to_run = self.method
+        method_used = ""
+
+        if prop_type == "LOX/LH2":
+            # --- Hydro-lox Engines ---
+            if method_to_run == "default":
+                method_to_run = "M-C1"  # Default for LOX/LH2
+
+            if method_to_run == "M-C1":
+                # Formula M-C1: M(kg) = 0.00514 * THRUST(N)^0.92068
+                mass = 0.00514 * (thrust_N ** 0.92068)
+                method_used = "M-C1"
+
+            elif method_to_run == "M-C2":
+                # Formula M-C2: M(kg) = 1.866E-10*THRUST^2 + 0.00130*THRUST + 77.4
+                mass = (1.866e-10 * (thrust_N ** 2)) + (0.00130 * thrust_N) + 77.4
+                method_used = "M-C2"
+
+            elif method_to_run == "M-C3":
+                # Formula M-C3: M(kg) = 1.091E-4*THRUST^1.185 * 1.108^CYCLE + 104.0
+                # CYCLE = 0 for staged combustion (SC), 1 for all other cycles
+                cycle_param = 0.0 if params.cycle_type == "SC" else 1.0
+                mass = (1.091e-4 * (thrust_N ** 1.185) * (1.108 ** cycle_param)) + 104.0
+                method_used = "M-C3"
+
+            else:
+                raise ValueError(
+                    f"Method '{method_to_run}' not valid for LOX/LH2. "
+                    f"Use 'M-C1', 'M-C2', or 'M-C3'."
+                )
+
+        elif prop_type in ["LOX/RP1", "LOX/LCH4", "Storable"]:
+            # --- Storable and Kero-lox Engines ---
+            if method_to_run == "default":
+                method_to_run = "M-S1"  # Default for this class
+
+            if method_to_run == "M-S1":
+                # Formula M-S1: M(kg) = 1.104E-3 * THRUST(N) + 27.702
+                mass = (1.104e-3 * thrust_N) + 27.702
+                method_used = "M-S1"
+
+            elif method_to_run == "M-S2":
+                # Formula M-S2: M=(1.079E-3*THRUST+53.0165)*NT^0.0369*EXP^-0.00184
+                nt = params.num_chambers
+                exp = params.expansion_ratio
+                if exp <= 0:
+                    raise ValueError("Expansion ratio must be > 0 for M-S2 calculation")
+                if nt <= 0:
+                    raise ValueError("Number of chambers must be > 0 for M-S2 calculation")
+
+                mass = (1.079e-3 * thrust_N + 53.0165) * (nt ** 0.0369) * (exp ** -0.00184)
+                method_used = "M-S2"
+
+            else:
+                raise ValueError(
+                    f"Method '{method_to_run}' not valid for {prop_type}. "
+                    f"Use 'M-S1' or 'M-S2'."
+                )
 
         else:
-            raise ValueError(f"Method '{method}' not valid for LOX/LH2. Use {get_args(MassMethod)}.")
+            raise ValueError(
+                f"Propellant type {prop_type} not supported by Zandbergen M-C/M-S models"
+            )
 
-    elif prop_type in ["LOX/RP1", "LOX/LCH4", "Storable"]:
-        # --- Storable and Kero-lox Engines ---
-        # We assume LCH4 (methane) follows the kero-lox/storable trend,
-        # per the paper's test case on RD-182.
-        if method == "default" or method == "M-S1":
-            # Formula M-S1: M(kg) = 1.104E-3 * THRUST(N) + 27.702
-            mass = (1.104e-3 * thrust_N) + 27.702
-            method_used = "M-S1"
+        # Store the method that was actually used (resolving "default")
+        self._method_used = method_used
 
-        elif method == "M-S2":
-            # Formula M-S2: M=(1.079E-3*THRUST+53.0165)*NT^0.0369*EXP^-0.00184
-            nt = params.num_chambers
-            exp = params.expansion_ratio
-            if exp == 0:
-                raise ValueError("Expansion ratio cannot be zero for M-S2 calculation")
-            if nt == 0:
-                raise ValueError("Number of chambers cannot be zero for M-S2 calculation")
+        # Zandbergen is monolithic (no components)
+        return ModelResult(
+            total_mass_kg=mass,
+            components_kg={
+                "Monolithic Mass": mass
+            },
+            notes={
+                "method_used": method_used
+            }
+        )
 
-            mass = (1.079e-3 * thrust_N + 53.0165) * (nt ** 0.0369) * (exp ** -0.00184)
-            method_used = "M-S2"
 
-        else:
-            raise ValueError(f"Method '{method}' not valid for {prop_type}. Use {get_args(MassMethod)}.")
-
-    else:
-        raise ValueError(f"Propellant type {prop_type} not supported by Zandbergen M-C/M-S models")
-
-    return {
-        "total_mass_kg": mass,
-        "components_kg": {
-            f"N/A (Monolithic, {method_used})": mass
-        },
-        "method_used": method_used
-    }
+# --- STANDALONE SIZE ESTIMATION FUNCTIONS ---
 
 
 def estimate_engine_length(params: EngineParams, method: LengthMethod = "default") -> float:
@@ -211,10 +256,10 @@ def estimate_engine_length(params: EngineParams, method: LengthMethod = "default
             # Formula L-C2: L=0.0615*THRUST^0.3091 * EXP^0.1037 * PRES^-0.1319
             exp = params.expansion_ratio
             pres_bar = params.chamber_pressure_Pa * PA_TO_BAR
-            if exp == 0:
-                raise ValueError("Expansion ratio cannot be zero for L-C2 calculation")
-            if pres_bar == 0:
-                raise ValueError("Chamber pressure cannot be zero for L-C2 calculation")
+            if exp <= 0:
+                raise ValueError("Expansion ratio must be > 0 for L-C2 calculation")
+            if pres_bar <= 0:
+                raise ValueError("Chamber pressure must be > 0 for L-C2 calculation")
 
             length = 0.0615 * (thrust_N ** 0.3091) * (exp ** 0.1037) * (pres_bar ** -0.1319)
 
@@ -231,10 +276,10 @@ def estimate_engine_length(params: EngineParams, method: LengthMethod = "default
             # Formula L-S2: L=0.0879*THRUST^0.2570 * NT^-0.3815 * EXP^0.0485
             nt = params.num_chambers
             exp = params.expansion_ratio
-            if nt == 0:
-                raise ValueError("Number of chambers cannot be zero for L-S2 calculation")
-            if exp == 0:
-                raise ValueError("Expansion ratio cannot be zero for L-S2 calculation")
+            if nt <= 0:
+                raise ValueError("Number of chambers must be > 0 for L-S2 calculation")
+            if exp <= 0:
+                raise ValueError("Expansion ratio must be > 0 for L-S2 calculation")
 
             length = 0.0879 * (thrust_N ** 0.2570) * (nt ** -0.3815) * (exp ** 0.0485)
 
@@ -289,10 +334,10 @@ def estimate_engine_diameter(params: EngineParams, method: DiameterMethod = "def
             # Formula D-C2: D=3.85E-3*THRUST^0.4856 * EXP^0.4361 * PRES^-0.4760
             exp = params.expansion_ratio
             pres_bar = params.chamber_pressure_Pa * PA_TO_BAR
-            if exp == 0:
-                raise ValueError("Expansion ratio cannot be zero for D-C2 calculation")
-            if pres_bar == 0:
-                raise ValueError("Chamber pressure cannot be zero for D-C2 calculation")
+            if exp <= 0:
+                raise ValueError("Expansion ratio must be > 0 for D-C2 calculation")
+            if pres_bar <= 0:
+                raise ValueError("Chamber pressure must be > 0 for D-C2 calculation")
 
             diameter = 3.85e-3 * (thrust_N ** 0.4856) * (exp ** 0.4361) * (pres_bar ** -0.4760)
 
@@ -308,8 +353,8 @@ def estimate_engine_diameter(params: EngineParams, method: DiameterMethod = "def
         elif method == "D-S2":
             # Formula D-S2: D=0.0415*THRUST^0.2788 * NT^0.1181
             nt = params.num_chambers
-            if nt == 0:
-                raise ValueError("Number of chambers cannot be zero for D-S2 calculation")
+            if nt <= 0:
+                raise ValueError("Number of chambers must be > 0 for D-S2 calculation")
 
             diameter = 0.0415 * (thrust_N ** 0.2788) * (nt ** 0.1181)
 
@@ -318,12 +363,12 @@ def estimate_engine_diameter(params: EngineParams, method: DiameterMethod = "def
             nt = params.num_chambers
             exp = params.expansion_ratio
             pres_bar = params.chamber_pressure_Pa * PA_TO_BAR
-            if nt == 0:
-                raise ValueError("Number of chambers cannot be zero for D-S3 calculation")
-            if exp == 0:
-                raise ValueError("Expansion ratio cannot be zero for D-S3 calculation")
-            if pres_bar == 0:
-                raise ValueError("Chamber pressure cannot be zero for D-S3 calculation")
+            if nt <= 0:
+                raise ValueError("Number of chambers must be > 0 for D-S3 calculation")
+            if exp <= 0:
+                raise ValueError("Expansion ratio must be > 0 for D-S3 calculation")
+            if pres_bar <= 0:
+                raise ValueError("Chamber pressure must be > 0 for D-S3 calculation")
 
             diameter = 0.0413 * (thrust_N ** 0.3110) * (nt ** 0.2111) * (exp ** 0.1349) * (pres_bar ** -0.2030)
 
@@ -334,71 +379,6 @@ def estimate_engine_diameter(params: EngineParams, method: DiameterMethod = "def
         raise ValueError(f"Propellant type {prop_type} not supported by Zandbergen D-C/D-S models")
 
     return diameter
-
-
-# --- Standalone Runner ---
-
-def run_single_engine_analysis(params: EngineParams):
-    """
-    Runs a full analysis (Mass, Length, Diameter) for a single engine
-    using all applicable Zandbergen (2015) methods and prints the results.
-
-    Args:
-        params (EngineParams): The engine parameters to analyze.
-    """
-    print("=" * 70)
-    print(f"Running Zandbergen (2015) Analysis for:")
-    print(f"  Thrust: {params.thrust_vac_N / 1_000_000:.3f} MN")
-    print(f"  Prop:   {params.propellant_type}")
-    print(f"  Cycle:  {params.cycle_type}")
-    print(f"  Pc:     {params.chamber_pressure_Pa / 1e6:.2f} MPa")
-    print(f"  Ae/At:  {params.expansion_ratio:.1f}")
-    print(f"  Chmbrs: {params.num_chambers}")
-    print("=" * 70)
-
-    # --- Mass Estimates ---
-    print("\n--- Mass Estimations (kg) ---")
-    if params.propellant_type == "LOX/LH2":
-        methods = ["M-C1", "M-C2", "M-C3"]
-    else:
-        methods = ["M-S1", "M-S2"]
-
-    for method in methods:
-        try:
-            res = estimate_engine_mass(params, method=method)
-            print(f"  {method:<6}: {res['total_mass_kg']:12,.1f} kg")
-        except Exception as e:
-            print(f"  {method:<6}: ERROR ({e})")
-
-    # --- Length Estimates (m) ---
-    print("\n--- Length Estimations (m) ---")
-    if params.propellant_type == "LOX/LH2":
-        methods = ["L-C1", "L-C2"]
-    else:
-        methods = ["L-S1", "L-S2"]
-
-    for method in methods:
-        try:
-            res = estimate_engine_length(params, method=method)
-            print(f"  {method:<6}: {res:12.2f} m")
-        except Exception as e:
-            print(f"  {method:<6}: ERROR ({e})")
-
-    # --- Diameter Estimates (m) ---
-    print("\n--- Diameter Estimations (m) ---")
-    if params.propellant_type == "LOX/LH2":
-        methods = ["D-C1", "D-C2"]
-    else:
-        methods = ["D-S1", "D-S2", "D-S3"]
-
-    for method in methods:
-        try:
-            res = estimate_engine_diameter(params, method=method)
-            print(f"  {method:<6}: {res:12.2f} m")
-        except Exception as e:
-            print(f"  {method:<6}: ERROR ({e})")
-
-    print("-" * 70)
 
 
 if __name__ == "__main__":
@@ -457,8 +437,53 @@ if __name__ == "__main__":
 
         try:
             engine_params = engine_getter()
-            # Run the full analysis for this engine
-            run_single_engine_analysis(engine_params)
+
+            # Instantiate and run all applicable models for this engine
+
+            print(f"\n--- Running Mass Models for {engine_key} ---")
+            if engine_params.propellant_type == "LOX/LH2":
+                methods: list[MassMethod] = ["M-C1", "M-C2", "M-C3"]
+            else:
+                methods: list[MassMethod] = ["M-S1", "M-S2"]
+
+            for method in methods:
+                model = ZandbergenEngineModel(method=method)
+                model.run_single_engine_analysis(engine_params)
+
+            # --- Run Size Estimations (which are still functions) ---
+            print(f"\n--- Running Size Models for {engine_key} ---")
+
+            # --- Length Estimates (m) ---
+            print("\n--- Length Estimations (m) ---")
+            if engine_params.propellant_type == "LOX/LH2":
+                len_methods: list[LengthMethod] = ["L-C1", "L-C2"]
+            else:
+                len_methods: list[LengthMethod] = ["L-S1", "L-S2"]
+
+            for method in len_methods:
+                try:
+                    res = estimate_engine_length(engine_params, method=method)
+                    print(f"  {method:<6}: {res:12.2f} m")
+                except Exception as e:
+                    print(f"  {method:<6}: ERROR ({e})")
+
+            # --- Diameter Estimates (m) ---
+            print("\n--- Diameter Estimations (m) ---")
+            if engine_params.propellant_type == "LOX/LH2":
+                diam_methods: list[DiameterMethod] = ["D-C1", "D-C2"]
+            else:
+                diam_methods: list[DiameterMethod] = ["D-S1", "D-S2", "D-S3"]
+
+            for method in diam_methods:
+                try:
+                    res = estimate_engine_diameter(engine_params, method=method)
+                    print(f"  {method:<6}: {res:12.2f} m")
+                except Exception as e:
+                    print(f"  {method:<6}: ERROR ({e})")
+
+            print("-" * 70)
+
+
         except Exception as e:
             print(f"\n[__main__] ERROR processing engine '{engine_key}': {e}")
 

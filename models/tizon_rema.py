@@ -63,6 +63,7 @@ from vehicle_definitions import (
 
 # Import from models/ (for data classes)
 from models.common_params import EngineParams, CycleType, StageParams
+from models.base import BaseEngineModel, ModelResult
 
 # --- 1. Reference Engine Data ---
 # Source: Tizón & Román, 2017, Table 7
@@ -260,7 +261,7 @@ COMPONENT_MATERIAL_MAP: Dict[str, str] = {
 
 # --- TIZON ENGINE MASS MODEL (SECTION II-VI) ---
 
-class TizonEngineModel:
+class TizonEngineModel(BaseEngineModel):
     """
     Implements the dimensionless mass model from Tizón & Román, 2017.
 
@@ -296,6 +297,11 @@ class TizonEngineModel:
         else:  # historical
             self.alphas = ALPHAS_HISTORICAL[cycle_type]
             self.exponents = EXPONENTS_HISTORICAL
+
+    @property
+    def model_name(self) -> str:
+        """Returns the unique, human-readable name of the model."""
+        return f"Tizon/RemA (2017) - {self.method.capitalize()}"
 
     def _calculate_param_ratios(self, params: EngineParams) -> Dict[str, Any]:
         """
@@ -460,7 +466,7 @@ class TizonEngineModel:
 
         return ratio
 
-    def estimate_total_mass(self, params: EngineParams) -> Dict[str, Any]:
+    def estimate_mass(self, params: EngineParams) -> ModelResult:
         """
         Estimates the total engine mass and its component breakdown.
 
@@ -470,7 +476,7 @@ class TizonEngineModel:
             params (EngineParams): The parameters of the new engine to estimate.
 
         Returns:
-            dict: A dictionary containing 'total_mass_kg' and 'components_kg'.
+            ModelResult: A TypedDict containing 'total_mass_kg' and 'components_kg'.
         """
 
         # 1. Calculate all P_j / P_j_0 ratios once
@@ -498,15 +504,15 @@ class TizonEngineModel:
         # 6. Calculate final total mass
         total_mass = self.ref_mass_kg * total_ratio_sum
 
-        return {
-            "total_mass_kg": total_mass,
-            "components_kg": component_masses,
-            "notes": {
-                "model": "Tizon/RemA (2017)",
+        # 7. Return the standardized ModelResult
+        return ModelResult(
+            total_mass_kg=total_mass,
+            components_kg=component_masses,
+            notes={
                 "method": self.method,
                 "reference_engine": self.ref_engine["name"]
             }
-        }
+        )
 
 
 # --- TIZON STAGE MASS MODELS (SECTION VII & VIII) ---
@@ -602,8 +608,8 @@ def calculate_tank_mass(stage: StageParams) -> float:
     ullage_factor = stage.tank_ullage_factor
 
     # --- 2. Calculate propellant volumes ---
-    m_fuel = m_prop / (1.0 + o_f_ratio) # [cite: 675]
-    m_ox = m_prop * o_f_ratio / (1.0 + o_f_ratio) # [cite: 676]
+    m_fuel = m_prop / (1.0 + o_f_ratio)  # [cite: 675]
+    m_ox = m_prop * o_f_ratio / (1.0 + o_f_ratio)  # [cite: 676]
 
     v_fuel_net = m_fuel / fuel_dens
     v_ox_net = m_ox / ox_dens
@@ -627,14 +633,14 @@ def calculate_tank_mass(stage: StageParams) -> float:
         # --- Spherical Tank Calculation (Eq. 79, 80, 81) [cite: 702, 704] ---
 
         # Fuel Tank
-        r_fuel = (3.0 * v_fuel_total / (4.0 * math.pi)) ** (1.0 / 3.0) # [cite: 702]
-        a_fuel = 4.0 * math.pi * r_fuel ** 2 # [cite: 702]
+        r_fuel = (3.0 * v_fuel_total / (4.0 * math.pi)) ** (1.0 / 3.0)  # [cite: 702]
+        a_fuel = 4.0 * math.pi * r_fuel ** 2  # [cite: 702]
         t_fuel = (p_tank_fuel * r_fuel) / (2.0 * sigma_zul)  # [cite: 704]
         total_tank_mass += (a_fuel * t_fuel * rho_tank)
 
         # Oxidizer Tank
-        r_ox = (3.0 * v_ox_total / (4.0 * math.pi)) ** (1.0 / 3.0) # [cite: 702]
-        a_ox = 4.0 * math.pi * r_ox ** 2 # [cite: 702]
+        r_ox = (3.0 * v_ox_total / (4.0 * math.pi)) ** (1.0 / 3.0)  # [cite: 702]
+        a_ox = 4.0 * math.pi * r_ox ** 2  # [cite: 702]
         t_ox = (p_tank_ox * r_ox) / (2.0 * sigma_zul)  # [cite: 704]
         total_tank_mass += (a_ox * t_ox * rho_tank)
 
@@ -680,59 +686,6 @@ def calculate_tank_mass(stage: StageParams) -> float:
 
 # --- STANDALONE TEST RUNNERS ---
 
-def run_single_engine_analysis(params: EngineParams):
-    """
-    Runs a full analysis for a single engine using both "design"
-    and "historical" methods from Tizon/RemA (2017) and prints the results.
-
-    Args:
-        params (EngineParams): The engine parameters to analyze.
-    """
-    print("=" * 70)
-    print(f"Running Tizon/RemA (2017) Engine-Only Analysis for:")
-    print(f"  Thrust: {params.thrust_vac_N / 1_000_000:.3f} MN")
-    print(f"  Prop:   {params.propellant_type}")
-    print(f"  Cycle:  {params.cycle_type}")
-    print(f"  Pc:     {params.chamber_pressure_Pa / 1e6:.2f} MPa")
-    print(f"  Ae/At:  {params.expansion_ratio:.1f}")
-    print(f"  FS:     {params.safety_factor}")
-    print(f"  Mats:   {params.materials}")
-    print("=" * 70)
-
-    methods: list[Literal["design", "historical"]] = ["design", "historical"]
-    results = {}
-
-    try:
-        for method in methods:
-            # 1. Instantiate the model for this method
-            model = TizonEngineModel(params.cycle_type, method=method)
-
-            # 2. Estimate the mass
-            result = model.estimate_total_mass(params)
-            total = result['total_mass_kg']
-            results[method] = total
-
-            # 3. Print formatted results
-            print(f"  --- Method: '{method}' (Reference: {model.ref_engine['name']}) ---")
-
-            # Print component breakdown
-            if total > 0:
-                for component, mass in result['components_kg'].items():
-                    percent = (mass / total * 100)
-                    print(f"    {component:<30}: {mass:10,.1f} kg ({percent:5.1f}%)")
-
-            # Print total
-            print(f"    {'-' * 30}: {'-' * 10} -- {'-' * 7}")
-            print(f"    {'TOTAL MASS':<30}: {total:10,.1f} kg (100.0%)")
-            print("-" * 70)
-        
-        return results
-
-    except ValueError as e:
-        # Catch errors (e.g., "Cycle type X not supported")
-        print(f"  ERROR processing {params.cycle_type} engine: {e}")
-        print("=" * 70)
-        return None
 
 def run_full_stage_analysis(engine_params: EngineParams, stage_params: StageParams):
     """
@@ -754,7 +707,7 @@ def run_full_stage_analysis(engine_params: EngineParams, stage_params: StagePara
         # --- 1. Calculate Engine Mass ---
         # We use 'historical' as it's generally preferred
         model = TizonEngineModel(engine_params.cycle_type, method="historical")
-        engine_result = model.estimate_total_mass(engine_params)
+        engine_result = model.estimate_mass(engine_params)
         engine_mass_kg = engine_result['total_mass_kg']
         print(f"  --- 1. Engine Mass (Historical) ---")
         print(f"    Total Engine Mass (1x): {engine_mass_kg:,.1f} kg")
@@ -777,7 +730,7 @@ def run_full_stage_analysis(engine_params: EngineParams, stage_params: StagePara
         total_engine_mass = engine_mass_kg * stage_params.num_engines
         m_inert_total = m_inert_stage_only + total_engine_mass + stage_params.payload_mass_kg
         m_gross = m_inert_total + m_prop
-        
+
         # This is the 'delta' calculated from our model
         final_delta = (m_inert_total - stage_params.payload_mass_kg) / m_gross
 
@@ -801,11 +754,10 @@ if __name__ == "__main__":
     """
     Standalone runner for the Tizon/RemA model.
     """
-
     # --- 1. CONFIGURE TEST RUN ---
     # This runs the ENGINE-ONLY analysis
-    SPECIFIC_ENGINE_KEY_TO_TEST = "default" # e.g., "ssme", "rd120", "default", or None for all
-    
+    SPECIFIC_ENGINE_KEY_TO_TEST = "default"  # e.g., "ssme", "rd120", "default", or None for all
+
     # This runs the FULL-STAGE analysis (Engine + Propellant + Tanks)
     # Set to 'True' to run the full stage demo
     RUN_FULL_STAGE_DEMO = True
@@ -849,11 +801,26 @@ if __name__ == "__main__":
 
         try:
             engine_params = engine_getter()
-            # Run the full analysis for this engine
-            run_single_engine_analysis(engine_params)
+
+            # Instantiate and run for 'historical' method
+            model_hist = TizonEngineModel(
+                cycle_type=engine_params.cycle_type,
+                method="historical"
+            )
+            # Call the INHERITED run_single_engine_analysis method
+            model_hist.run_single_engine_analysis(engine_params)
+
+            # Instantiate and run for 'design' method
+            model_design = TizonEngineModel(
+                cycle_type=engine_params.cycle_type,
+                method="design"
+            )
+            # Call the INHERITED run_single_engine_analysis method
+            model_design.run_single_engine_analysis(engine_params)
+
         except Exception as e:
             print(f"\n[__main__] ERROR processing engine '{engine_key}': {e}")
-    
+
     print("-" * 70)
 
     # --- 5. Run FULL STAGE analysis (using default_rocket_params) ---

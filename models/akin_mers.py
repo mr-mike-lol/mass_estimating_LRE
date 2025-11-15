@@ -42,14 +42,87 @@ Cons:
 import math
 from typing import Literal, Dict, Tuple, Any
 from models.common_params import EngineParams, StageParams
+from models.base import BaseEngineModel, ModelResult
 from vehicle_definitions import DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, G0
 import vehicle_definitions
+import inspect
 
 
-def estimate_engine_mass(thrust_N: float, expansion_ratio: float) -> float:
+# --- Public Interface Class ---
+
+class AkinPropulsionModel(BaseEngineModel):
+    """
+    Implements the Akin (1991) MERs for a full propulsion system.
+
+    This model combines the individual MERs for the engine,
+    thrust structure, and gimbals into a single "propulsion system"
+    mass, as done in the original main.py.
+    """
+
+    @property
+    def model_name(self) -> str:
+        """Returns the unique, human-readable name of the model."""
+        return "Akin (1991) - Propulsion System"
+
+    def estimate_mass(self, params: EngineParams) -> ModelResult:
+        """
+        Estimates the total propulsion system mass (Engine + Thrust
+        Structure + Gimbals).
+
+        Args:
+            params (EngineParams): The standardized dataclass. This model
+                                   uses thrust, expansion_ratio, and
+                                   chamber_pressure.
+
+        Returns:
+            ModelResult: A TypedDict containing the total mass and
+                         component breakdown.
+
+        Raises:
+            ValueError: If chamber pressure is not a positive number.
+        """
+        if params.chamber_pressure_Pa <= 0:
+            raise ValueError("Chamber pressure must be > 0 for Akin gimbal calculation.")
+
+        # Call the individual MER functions
+        m_engine = estimate_engine_mass_mer(
+            params.thrust_vac_N,
+            params.expansion_ratio
+        )
+
+        m_thrust_structure = estimate_thrust_structure_mass(
+            params.thrust_vac_N
+        )
+
+        m_gimbals = estimate_gimbal_mass(
+            params.thrust_vac_N,
+            params.chamber_pressure_Pa
+        )
+
+        total_mass = m_engine + m_thrust_structure + m_gimbals
+
+        components = {
+            "Engine (MER)": m_engine,
+            "Thrust Structure (MER)": m_thrust_structure,
+            "Gimbals (MER)": m_gimbals
+        }
+
+        return ModelResult(
+            total_mass_kg=total_mass,
+            components_kg=components,
+            notes={
+                "method": "Sum of Engine, Thrust Structure, and Gimbal MERs.",
+                "reference": "Akin (ENAE 791)"
+            }
+        )
+
+
+# --- Individual MER Functions ---
+
+def estimate_engine_mass_mer(thrust_N: float, expansion_ratio: float) -> float:
     """
     Estimates liquid pump-fed rocket engine mass based on thrust and expansion ratio.
-    Returns a dictionary with total mass and component (term) breakdown.
+    Returns only the total mass.
 
     Reference:
     [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 25 [cite: 357-360].
@@ -60,7 +133,7 @@ def estimate_engine_mass(thrust_N: float, expansion_ratio: float) -> float:
         expansion_ratio (float): Nozzle expansion ratio (Ae/At).
 
     Returns:
-        Dict: Dictionary with 'total_mass_kg' and 'components_kg'.
+        float: Estimated engine-only mass in kg.
     """
     # [cite_start]Term 1 from formula [cite: 358]
     term1 = 7.81e-4 * thrust_N
@@ -278,6 +351,8 @@ def estimate_avionics_mass(vehicle_gross_mass_kg: float) -> float:
     Returns:
         float: Estimated avionics mass in kg.
     """
+    if vehicle_gross_mass_kg <= 0:
+        return 0.0
     # [cite_start]Formula from source [cite: 284]
     return 10.0 * (vehicle_gross_mass_kg ** 0.361)
 
@@ -337,7 +412,7 @@ def estimate_gimbal_mass(engine_thrust_N: float, chamber_pressure_Pa: float) -> 
         float: Estimated gimbal mass in kg.
     """
     if chamber_pressure_Pa <= 0:
-        return 0.0
+        raise ValueError("Chamber pressure must be > 0 for gimbal calculation")
 
     # [cite_start]Ratio T(N) / P_0(Pa) from formula [cite: 369]
     ratio = engine_thrust_N / chamber_pressure_Pa
@@ -361,7 +436,7 @@ def estimate_gimbal_torque(engine_thrust_N: float, chamber_pressure_Pa: float) -
         float: Estimated gimbal torque in N*m.
     """
     if chamber_pressure_Pa <= 0:
-        return 0.0
+        raise ValueError("Chamber pressure must be > 0 for gimbal torque calculation")
 
     # [cite_start]Ratio T(N) / P_0(Pa) from formula [cite: 371]
     ratio = engine_thrust_N / chamber_pressure_Pa
@@ -524,35 +599,26 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
     """
 
     # --- Step 1: Vehicle-Level 1st Pass (Page 3) ---
-    # Page 3
     Ve = engine.isp_vac_s * G0
-    # Page 3
     r = math.exp(-stage.delta_v_ms / Ve)
-    # Page 3
     lambda_payload = r - stage.initial_delta
     if lambda_payload <= 0:
         raise ValueError(f"Infeasible mission: delta ({stage.initial_delta}) is too high for this dV/Isp.")
-    # Page 3
+
     M_o = stage.payload_mass_kg / lambda_payload
-    # Page 3
     M_i_initial_guess = stage.initial_delta * M_o
-    # Page 3
     M_p = M_o * (1 - r)
 
     # --- Step 2: Propellant Calcs (Page 4) ---
-    # Page 4
     M_lh2 = M_p / (1 + engine.mixture_ratio)
-    # Page 4
     M_lox = M_p * engine.mixture_ratio / (1 + engine.mixture_ratio)
 
     # --- Step 3: Tank Mass (Page 7, 9, 10) ---
-    # Page 7, Page 9
     M_lox_tank = estimate_propellant_tank_mass_from_mass(M_lox, "LOX")
-    # Page 7, Page 10
     M_lh2_tank = estimate_propellant_tank_mass_from_mass(M_lh2, "LH2")
 
     # --- Step 4: Insulation Mass (Page 8-10, 31) ---
-    # This logic now depends on the 'tank_geometry' flag
+    # This logic depends on the 'tank_geometry' flag
 
     # Tank radii and heights (initially 0)
     r_lox_tank_m = 0.0
@@ -590,7 +656,7 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
             M_lh2, DENSITY_LH2, vehicle_radius_m
         )
 
-        # --- PDF Pass 2/3 Insulation Area Fix ---
+        # --- PDF Pass 2/3 Insulation Area ---
         # The PDF (Pages 31-32) implies the insulation mass for
         # cylindrical tanks is *not* based on the cylinder's geometric
         # area (side + 2 caps), but is instead based on the
@@ -604,7 +670,6 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
 
     # Page 8, Page 9
     M_lox_insulation = estimate_cryo_insulation_mass(A_lox_tank, "LOX")
-    # Page 8, Page 10
     M_lh2_insulation = estimate_cryo_insulation_mass(A_lh2_tank, "LH2")
 
     # --- Step 5: Fairing Mass (Page 20-23) ---
@@ -613,28 +678,21 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
     A_aft_fairing = 0.0
 
     if stage.tank_geometry == "Sphere":
-        # Page 21-22
         A_payload_fairing = calculate_cone_area(r_lox_tank_m, stage.payload_fairing_height_m)
-        # Page 21-22
         A_intertank_fairing = calculate_frustum_area(r_lh2_tank_m, r_lox_tank_m, stage.intertank_fairing_height_m)
-        # Page 21-22
         A_aft_fairing = calculate_cylinder_area(r_lh2_tank_m, stage.aft_fairing_height_m)
 
     else:  # "Cylinder"
         # All sections share the same radius
         vehicle_radius_m = vehicle_radius_for_fairings_m
-        # Page 21-22
         A_payload_fairing = calculate_cone_area(vehicle_radius_m, stage.payload_fairing_height_m)
         # Intertank is now a cylinder
         A_intertank_fairing = calculate_cylinder_area(vehicle_radius_m, stage.intertank_fairing_height_m)
-        # Page 21-22
         A_aft_fairing = calculate_cylinder_area(vehicle_radius_m, stage.aft_fairing_height_m)
 
     # Page 20, Page 23
     M_payload_fairing = estimate_fairing_mass(A_payload_fairing)
-    # Page 20, Page 23
     M_intertank_fairing = estimate_fairing_mass(A_intertank_fairing)
-    # Page 20, Page 23
     M_aft_fairing = estimate_fairing_mass(A_aft_fairing)
 
     # --- Step 6: Avionics & Wiring (Page 20, 24) ---
@@ -669,16 +727,15 @@ def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str,
     M_wiring = estimate_wiring_mass(M_o, vehicle_length_l)
 
     # --- Step 7: Propulsion (Page 25-28) ---
-    # Page 27-28
     Total_Thrust_T = M_o * G0 * stage.initial_twr
     T_per_engine = Total_Thrust_T / stage.num_engines
-    # Page 25, Page 28
-    M_per_engine = estimate_engine_mass(T_per_engine, engine.expansion_ratio)
+
+    M_per_engine = estimate_engine_mass_mer(T_per_engine, engine.expansion_ratio)
     M_engines_total = M_per_engine * stage.num_engines
-    # Page 25, Page 28
+
     M_thrust_structure_per_eng = estimate_thrust_structure_mass(T_per_engine)
     M_thrust_structure_total = M_thrust_structure_per_eng * stage.num_engines
-    # Page 26
+
     M_gimbal_per_engine = estimate_gimbal_mass(T_per_engine, engine.chamber_pressure_Pa)
     M_gimbals_total = M_gimbal_per_engine * stage.num_engines
 
@@ -761,12 +818,11 @@ def _get_pdf_reference_data(pass_num: int) -> Dict[str, Any]:
                 "Gimbals": 81, "Avionics": 744, "Wiring": 886
             },
             "total_kg": 13052,
-            "guess_kg": 12240,  # Based on M_o=153000
-            "margin_pct": -6.22  # (12240-13052)/12240
+            "guess_kg": 12240,
+            "margin_pct": -6.22
         }
     elif pass_num == 2:
         # Data from Pass 2 (Page 32)
-        # These values are based on the dV=9200 (r=0.1129) run
         return {
             "components_kg": {
                 "LOX Tank": 1245, "LH2 Tank": 2482, "LOX Insulation": 56,
@@ -787,9 +843,9 @@ def _get_pdf_reference_data(pass_num: int) -> Dict[str, Any]:
                 "Aft Fairing": 626, "Engines": 2443, "Thrust Structure": 552,
                 "Gimbals": 90, "Avionics": 773, "Wiring": 1101
             },
-            "total_kg": 10870,  # Recalculated total
-            "guess_kg": 14130,  # M_i_calc from Pass 2
-            "margin_pct": 30  # (12016-11785)/12016
+            "total_kg": 10870,
+            "guess_kg": 14130,
+            "margin_pct": 30
         }
     else:
         # Default to empty if pass_num is not 1, 2, or 3
@@ -902,7 +958,7 @@ if __name__ == "__main__":
 
         # 3. Print the formatted results
         # Options: pass_num=1, 2, 3; show_pdf_ref = True to enable ssto_default_params
-        print_ssto_results(results, pass_num = 2, show_pdf_ref=False)
+        print_ssto_results(results, pass_num=2, show_pdf_ref=False)
 
     except Exception as e:
         print(f"\nAn error occurred during the analysis: {e}")

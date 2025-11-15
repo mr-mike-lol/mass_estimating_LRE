@@ -34,11 +34,17 @@ Cons:
     [cite_start]and does not inherently model cost or size-scaling effects[cite: 637, 638].
 """
 
-from .common_params import EngineParams
+from models.common_params import EngineParams, StageParams
 from vehicle_definitions import DENSITY_RP1, DENSITY_LOX
+from models.base import BaseStageModel, StageModelResult
+from typing import Dict, Any
+
+# For standalone running
+import inspect
+import vehicle_definitions
 
 
-class KibbeyStageModel:
+class KibbeyStageModel(BaseStageModel):
     """
     [cite_start]Implements the 'Next-Order Mass Model' from Kibbey (2015) [cite: 331-332].
 
@@ -84,6 +90,11 @@ class KibbeyStageModel:
         self.F_PRIME_I_OT_0 = 0.0180  # [cite: 388]
         self.F_PRIME_I_FT_0 = 0.0255  # [cite: 388]
 
+    @property
+    def model_name(self) -> str:
+        """Returns the unique, human-readable name of the model."""
+        return "Kibbey (2015) Stage Model"
+
     def _calculate_bulk_density(self, rho_ox: float, rho_fu: float, of_ratio: float) -> float:
         """Helper function to calculate propellant bulk density."""
         total_parts = 1.0 + of_ratio
@@ -119,10 +130,19 @@ class KibbeyStageModel:
 
         # [cite_start]1. Correlate new engine T/W (FW_Eng) with bulk density per Eq. 13 [cite: 373]
         rho_ratio = params.bulk_density / self.RHO_BULK_0
+        if rho_ratio < 0:
+            rho_ratio = 0  # Avoid issues with negative densities if inputs are bad
         fw_eng_new = 39.83 * rho_ratio + 38.17
 
         # 2. Calculate new propellant-to-gross-mass ratio (R_mp)
-        r_mp_new = 1.0 - (1.0 / r_new)
+        if r_new <= 0:
+            raise ValueError("Mission mass ratio (R) must be > 0.")
+        if r_new == 1.0:
+            # Avoid division by zero if R=1.0 (no propellant)
+            r_mp_new = 0.0
+        else:
+            r_mp_new = 1.0 - (1.0 / r_new)
+
         if r_mp_new == 0 or fw_eng_new == 0:
             return 0.0
 
@@ -143,12 +163,17 @@ class KibbeyStageModel:
         """
 
         # [cite_start]1. Find oxidizer density ratio (r_rho_ox) per Eq. 17b [cite: 391]
+        if self.RHO_OX_0 <= 0:
+            raise ValueError("Reference oxidizer density must be > 0.")
         r_rho_ox = params.oxidizer_density / self.RHO_OX_0
-        if r_rho_ox == 0:
-            return 0.0
+        if r_rho_ox <= 0:
+            raise ValueError("New oxidizer density must be > 0.")
 
         # 2. Calculate f_i,ot using Eq. [cite_start]20 (scales with 1/density) [cite: 400]
         of_new = params.mixture_ratio
+        if (of_new + 1.0) == 0:
+            return 0.0  # Avoid division by zero
+
         f_i_ot = self.F_PRIME_I_OT_0 * (1.0 / r_rho_ox) * (of_new / (of_new + 1.0))
         return f_i_ot
 
@@ -170,16 +195,26 @@ class KibbeyStageModel:
         r_p = self._calculate_bulk_density_ratio(params)
 
         # 2. Calculate new fuel density ratio (r_rho_fu) per Eq. [cite_start]17a [cite: 390]
+        if self.RHO_FU_0 <= 0:
+            raise ValueError("Reference fuel density must be > 0.")
         r_rho_fu = params.fuel_density / self.RHO_FU_0
-        if r_rho_fu == 0:
-            return 0.0
+        if r_rho_fu <= 0:
+            raise ValueError("New fuel density must be > 0.")
 
         # 3. Calculate new propellant-to-gross-mass ratio (R_mp)
-        r_mp_new = 1.0 - (1.0 / r_new)
+        if r_new <= 0:
+            raise ValueError("Mission mass ratio (R) must be > 0.")
+        if r_new == 1.0:
+            r_mp_new = 0.0
+        else:
+            r_mp_new = 1.0 - (1.0 / r_new)
+
         of_new = params.mixture_ratio
+        if (of_new + 1.0) == 0:
+            return 0.0  # Avoid division by zero
 
         # 4. Calculate the numerator and denominator of the load ratio (L/L0)
-        numerator_L_ratio = 1.0 / r_mp_new - (1.0 / (of_new + 1.0))
+        numerator_L_ratio = (1.0 / r_mp_new if r_mp_new > 0 else 0) - (1.0 / (of_new + 1.0))
         denominator_L_ratio = 1.0 / self.R_MP_0 - (1.0 / (self.OF_0 + 1.0))
 
         if denominator_L_ratio == 0:
@@ -192,29 +227,46 @@ class KibbeyStageModel:
         f_i_ft = self.F_PRIME_I_FT_0 * (r_p / r_rho_fu) * (1.0 / (of_new + 1.0)) * load_ratio_term
         return f_i_ft
 
-    def estimate_propellant_mass_fraction(self, params: EngineParams,
-                                          mission_mass_ratio: float,
-                                          mission_T_W: float) -> dict:
+    def estimate_stage_fractions(self,
+                                 params: EngineParams,
+                                 stage_params: StageParams) -> StageModelResult:
         """
         Estimates the stage propellant mass fraction (lambda) and inert fractions.
 
-        This function assumes the input `mission_mass_ratio` (R) and
-        `mission_T_W` (Psi) are the target parameters for the *new*
-        stage being designed.
+        This function assumes the input mission parameters are stored in
+        the `stage_params` object.
 
         Args:
             params (EngineParams): Parameters of the *new* engine.
-            mission_mass_ratio (float): Target mass ratio (R = mi/mf)
-                                        for the *new* stage.
-            mission_T_W (float): Target thrust-to-weight (Psi = T/W)
-                                 for the *new* stage.
+            stage_params (StageParams): Parameters of the *new* stage,
+                                        including target dV, TWR, and payload.
+                                        This model specifically uses:
+                                        - `initial_twr` (as Psi)
+                                        - `delta_v_ms` and `params.isp_vac_s` (to calculate R)
 
         Returns:
-            dict: A dictionary containing the following key-value pairs:
+            StageModelResult: A dictionary containing the following key-value pairs:
                 - 'propellant_mass_fraction': (lambda) Stage propellant mass / Stage total mass
                 - 'total_inert_fraction': (f_i_total) Stage inert mass / Stage propellant mass
                 - 'component_fractions': A nested dict with the 3 inert components
         """
+
+        # Kibbey's model requires R (mass ratio) and Psi (T/W)
+        # We get Psi directly from the stage parameters
+        mission_T_W = stage_params.initial_twr
+
+        # We must calculate the target mission_mass_ratio (R) from dV and Isp
+        # R = exp(dV / (Isp * g0))
+        if params.isp_vac_s <= 0:
+            raise ValueError("Engine Isp must be > 0.")
+
+        ve = params.isp_vac_s * vehicle_definitions.G0
+        if ve <= 0:
+            raise ValueError("Exhaust velocity (Isp) must be > 0.")
+
+        mission_mass_ratio = (stage_params.delta_v_ms / ve)
+        if mission_mass_ratio < 0:
+            mission_mass_ratio = 0  # dV = 0 case
 
         # Calculate each of the three inert components
         f_i_E_S = self._calculate_fi_E_S(params, mission_mass_ratio, mission_T_W)
@@ -233,12 +285,60 @@ class KibbeyStageModel:
             lambda_fraction = 1.0 / (1.0 + f_i_total)
 
         # Return a structured dictionary with all results
-        return {
-            "propellant_mass_fraction": lambda_fraction,
-            "total_inert_fraction": f_i_total,  # total_inert_fraction: the stage propellant mass fraction
-            "component_fractions": {
-                "f_i_E_S": f_i_E_S,  #  the engine-and-structure inert mass per total propellant mass
-                "f_i_ot": f_i_ot,  # the oxidizer tank inert mass per total propellant mass
-                "f_i_ft": f_i_ft  # the fuel tank inert mass per total propellant mass
-            }
+        component_fractions: Dict[str, float] = {
+            "f_i_E_S": f_i_E_S,  # the engine-and-structure inert mass per total propellant mass
+            "f_i_ot": f_i_ot,  # the oxidizer tank inert mass per total propellant mass
+            "f_i_ft": f_i_ft  # the fuel tank inert mass per total propellant mass
         }
+
+        notes: Dict[str, Any] = {
+            "reference_stage": "Atlas V (LOX/RP1)",
+            "input_R": mission_mass_ratio,
+            "input_Psi": mission_T_W
+        }
+
+        return StageModelResult(
+            propellant_mass_fraction=lambda_fraction,
+            total_inert_fraction=f_i_total,
+            component_fractions=component_fractions,
+            notes=notes
+        )
+
+
+if __name__ == "__main__":
+    """
+    Standalone runner for the Kibbey (2015) Stage Model.
+    """
+
+    print("[__main__] Running Kibbey Stage Model Standalone Analysis...")
+    print("=" * 70)
+
+    # --- 1. Get Engine & Stage Definitions ---
+    # We will test this model with two different engines to see
+    # the extrapolation effect, but using the *same* stage/mission.
+
+    try:
+        # Get the default custom rocket parameters
+        engine_params, stage_params = vehicle_definitions.default_rocket_params()
+
+        # Get a LOX/LH2 engine for comparison
+        lh2_engine_params = vehicle_definitions.get_ssme_engine()
+
+        # --- 2. Instantiate and Run Model ---
+        model = KibbeyStageModel()
+
+        # --- Test 1: Default (LOX/LCH4) Engine ---
+        print("\n--- Test 1: Default (LOX/LCH4) Engine ---")
+        # Use the inherited run method
+        model.run_single_stage_analysis(engine_params, stage_params)
+
+        # --- Test 2: SSME (LOX/LH2) Engine ---
+        print("\n--- Test 2: SSME (LOX/LH2) Engine (Extrapolation) ---")
+        # Use the same stage params, but the LH2 engine
+        model.run_single_stage_analysis(lh2_engine_params, stage_params)
+
+    except Exception as e:
+        print(f"\n[__main__] ERROR during standalone analysis: {e}")
+
+    print("=" * 70)
+    print("[__main__] Standalone analysis complete.")
