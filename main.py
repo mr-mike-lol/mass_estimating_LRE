@@ -153,7 +153,7 @@ if __name__ == "__main__":
     for model in stage_models_to_run:
         model.run_single_stage_analysis(rd120_params, custom_stage_params)
 
-    # Test 2: SSME (LOX/LH2, extrapolation test)
+    # Test 2: default (extrapolation test)
     _ssme_name, ssme_params = test_engines["ssme"]
     print(f"\n--- Running Stage Models for SSME (LOX/LH2) ---")
     for model in stage_models_to_run:
@@ -168,24 +168,7 @@ if __name__ == "__main__":
     # so we run its specific function directly.
     # We have not refactored this part into a BaseStageModel yet.
 
-    # Scenario 1: Run default mission but override with SSME engine
-    print("\n--- Running Akin SSTO with SSME Engine ---")
-    _ssme_name_ssto, ssme_params_ssto = test_engines["ssme"]
-
-    # Get the default stage params
-    _default_engine, stage_params_ssto = default_rocket_params()
-    # Override the engine in the stage object
-    stage_params_ssto.engine = ssme_params_ssto
-
-    try:
-        results_ssme = run_akin_ssto_example(
-            ssme_params_ssto, stage_params_ssto
-        )
-        print_ssto_results(results_ssme, show_pdf_ref=False)
-    except Exception as e:
-        print(f"ERROR running Akin SSTO (SSME): {e}\n")
-
-    # Scenario 2: Run the fully custom scenario
+    # Test 3: Run the default
     print("\n--- Running Akin SSTO with Custom Params ---")
     custom_engine, custom_stage = default_rocket_params()
     try:

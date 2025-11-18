@@ -10,6 +10,7 @@ new stage by scaling from a well-defined reference stage (the Atlas V).
 
 The model breaks the stage inert mass (relative to propellant mass)
 [cite_start]into three key components[cite: 365]:
+
 1.  f_i,E&S: Engine & Structure (thrust-dependent)
 2.  f_i,ot: Oxidizer Tank (volume-dependent)
 3.  f_i,ft: Fuel Tank (volume- and load-dependent)
@@ -34,33 +35,31 @@ Cons:
     [cite_start]and does not inherently model cost or size-scaling effects[cite: 637, 638].
 """
 
+import math
+from typing import Dict, Any, Tuple, Optional
+
 from models.common_params import EngineParams, StageParams
 from models.common_params import (
-    DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4, G0
+    DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, G0
 )
-from models.base import BaseStageModel, StageModelResult
-from typing import Dict, Any
+from models.base import BaseStageModel, StageModelResult, StageMassBudget
 
-# For standalone running
-import inspect
 import vehicle_definitions
 
 
 class KibbeyStageModel(BaseStageModel):
     """
-    [cite_start]Implements the 'Next-Order Mass Model' from Kibbey (2015) [cite: 331-332].
+    Implements the 'Next-Order Mass Model' from Kibbey (2015).
 
     This model estimates stage inert mass by scaling three components
-    (Engine/Structure, Ox Tank, Fuel Tank) from a calibrated
-    [cite_start]reference stage (Atlas V, LOX/RP1)[cite: 327, 342].
+    (Engine/Structure, Ox Tank, Fuel Tank) from a calibrated reference (Atlas V, LOX/RP1).
     """
 
     def __init__(self):
         """
-        Initializes the model with reference constants from the Atlas V,
-        [cite_start]as defined in Section III of the paper [cite: 342-360].
+        Initializes the model with reference constants from the Atlas V
+        (LOX/RP1), as defined in Section III of the paper.
         """
-
         # --- Reference Constants (Atlas V) ---
 
         # [cite_start]Controlling constants [cite: 342-343]
@@ -94,8 +93,9 @@ class KibbeyStageModel(BaseStageModel):
 
     @property
     def model_name(self) -> str:
-        """Returns the unique, human-readable name of the model."""
         return "Kibbey (2015) Stage Model"
+
+    # --- Internal Helper Methods ---
 
     def _calculate_bulk_density(self, rho_ox: float, rho_fu: float, of_ratio: float) -> float:
         """Helper function to calculate propellant bulk density."""
@@ -107,10 +107,7 @@ class KibbeyStageModel(BaseStageModel):
         return total_parts / (vol_fuel + vol_ox)
 
     def _calculate_bulk_density_ratio(self, params: EngineParams) -> float:
-        """
-        Calculates the new-to-reference bulk density ratio (r_rho).
-        [cite_start]Implements Eq. 18[cite: 397].
-        """
+        """Calculates the new-to-reference bulk density ratio (r_rho)."""
         rho_bulk_new = params.bulk_density
         if self.RHO_BULK_0 == 0:
             return 1.0
@@ -229,74 +226,132 @@ class KibbeyStageModel(BaseStageModel):
         f_i_ft = self.F_PRIME_I_FT_0 * (r_p / r_rho_fu) * (1.0 / (of_new + 1.0)) * load_ratio_term
         return f_i_ft
 
-    def estimate_stage_fractions(self,
-                                 params: EngineParams,
-                                 stage_params: StageParams) -> StageModelResult:
+    def _get_fractions_internal(self, params: EngineParams, stage_params: StageParams) -> Dict[str, float]:
         """
-        Estimates the stage propellant mass fraction (lambda) and inert fractions.
-
-        This function assumes the input mission parameters are stored in
-        the `stage_params` object.
-
-        Args:
-            params (EngineParams): Parameters of the *new* engine.
-            stage_params (StageParams): Parameters of the *new* stage,
-                                        including target dV, TWR, and payload.
-                                        This model specifically uses:
-                                        - `initial_twr` (as Psi)
-                                        - `delta_v_ms` and `params.isp_vac_s` (to calculate R)
-
-        Returns:
-            StageModelResult: A dictionary containing the following key-value pairs:
-                - 'propellant_mass_fraction': (lambda) Stage propellant mass / Stage total mass
-                - 'total_inert_fraction': (f_i_total) Stage inert mass / Stage propellant mass
-                - 'component_fractions': A nested dict with the 3 inert components
+        Computes the inert fractions based on current stage params.
+        This avoids code duplication between sizing and component methods.
         """
-
-        # Kibbey's model requires R (mass ratio) and Psi (T/W)
-        # We get Psi directly from the stage parameters
-        mission_T_W = stage_params.initial_twr
-
-        # We must calculate the target mission_mass_ratio (R) from dV and Isp
-        # R = exp(dV / (Isp * g0))
         if params.isp_vac_s <= 0:
             raise ValueError("Engine Isp must be > 0.")
 
-        ve = params.isp_vac_s * vehicle_definitions.G0
-        if ve <= 0:
-            raise ValueError("Exhaust velocity (Isp) must be > 0.")
+        ve = params.isp_vac_s * G0
 
-        mission_mass_ratio = (stage_params.delta_v_ms / ve)
-        if mission_mass_ratio < 0:
-            mission_mass_ratio = 0  # dV = 0 case
+        # Calculate Mass Ratio R = exp(dV / Ve)
+        mission_mass_ratio = math.exp(stage_params.delta_v_ms / ve)
 
-        # Calculate each of the three inert components
+        # Get Psi (T/W)
+        mission_T_W = stage_params.initial_twr
+
         f_i_E_S = self._calculate_fi_E_S(params, mission_mass_ratio, mission_T_W)
         f_i_ot = self._calculate_fi_ot(params)
         f_i_ft = self._calculate_fi_ft(params, mission_mass_ratio, mission_T_W)
 
-        # Sum them to get f_i_total, as in Eq. [cite_start]11 [cite: 365]
-        # (f_i_total = total inert mass / total propellant mass)
-        f_i_total = f_i_E_S + f_i_ot + f_i_ft
+        return {
+            "f_i_E_S": f_i_E_S,
+            "f_i_ot": f_i_ot,
+            "f_i_ft": f_i_ft,
+            "f_i_total": f_i_E_S + f_i_ot + f_i_ft,
+            "R": mission_mass_ratio
+        }
 
-        # Calculate lambda (propellant mass fraction), as in Eq. [cite_start]12 [cite: 366]
-        # (lambda = total propellant mass / total stage mass)
+    # --- Abstract Methods Implementation (BaseStageModel) ---
+
+    def _calculate_initial_sizing(self,
+                                  params: EngineParams,
+                                  stage: StageParams
+                                  ) -> Tuple[float, float, float]:
+        """
+        Solves the rocket equation using Kibbey's inert fraction (f_i).
+
+        Derivation:
+          M_o = M_pay / [1 - (1 - 1/R)(1 + f_i)]
+        """
+        fractions = self._get_fractions_internal(params, stage)
+        f_i = fractions["f_i_total"]
+        R = fractions["R"]
+
+        if R <= 1.0:
+            return 0.0, 0.0, 0.0
+
+        # Denominator of the sizing equation
+        # Lambda_stage = 1 - (1 - 1/R)(1 + f_i)
+        # Where Lambda_stage = M_payload / M_gross
+        propellant_fraction_of_gross = (1.0 - 1.0 / R)
+        denominator = 1.0 - propellant_fraction_of_gross * (1.0 + f_i)
+
+        if denominator <= 0:
+            raise ValueError(
+                f"Infeasible Mission: Inert fraction ({f_i:.4f}) is too high "
+                f"for the required Mass Ratio ({R:.2f})."
+            )
+
+        gross_mass = stage.payload_mass_kg / denominator
+        propellant_mass = gross_mass * propellant_fraction_of_gross
+        inert_mass = propellant_mass * f_i
+
+        return gross_mass, propellant_mass, inert_mass
+
+    def _calculate_tank_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """
+        Returns total tank mass: M_prop * (f_i,ot + f_i,ft).
+        """
+        fractions = self._get_fractions_internal(params, stage)
+        f_tank_total = fractions["f_i_ot"] + fractions["f_i_ft"]
+        return stage.propellant_mass_kg * f_tank_total
+
+    def _calculate_propulsion_system_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """
+        Returns Propulsion mass.
+        Kibbey groups Engine & Structure into f_i,E&S.
+        We assign this entire fraction to Propulsion here.
+        """
+        fractions = self._get_fractions_internal(params, stage)
+        return stage.propellant_mass_kg * fractions["f_i_E_S"]
+
+    def _calculate_structural_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """
+        Returns Structure mass.
+        NOTE: Kibbey's model includes structural mass in the 'Engine & Structure'
+        fraction (f_i,E&S), which is returned in _calculate_propulsion_system_mass.
+        Therefore, this returns 0.0 to avoid double counting.
+        """
+        return 0.0
+
+    def _calculate_avionics_and_power_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """Not explicitly modeled in Kibbey (2015)."""
+        return 0.0
+
+    def _calculate_insulation_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """Not explicitly modeled in Kibbey (2015)."""
+        return 0.0
+
+    def estimate_stage_fractions(self,
+                                 params: EngineParams,
+                                 stage_params: StageParams) -> StageModelResult:
+        """
+        Estimates stage propellant mass fraction (lambda) and inert fractions.
+        Required by the BaseStageModel legacy interface.
+        """
+        fractions = self._get_fractions_internal(params, stage_params)
+        f_i_total = fractions["f_i_total"]
+
+        # Calculate lambda (propellant mass / total stage mass)
+        # lambda = 1 / (1 + f_i)
         if (1.0 + f_i_total) == 0:
             lambda_fraction = 0.0
         else:
             lambda_fraction = 1.0 / (1.0 + f_i_total)
 
-        # Return a structured dictionary with all results
-        component_fractions: Dict[str, float] = {
-            "f_i_E_S": f_i_E_S,  # the engine-and-structure inert mass per total propellant mass
-            "f_i_ot": f_i_ot,  # the oxidizer tank inert mass per total propellant mass
-            "f_i_ft": f_i_ft  # the fuel tank inert mass per total propellant mass
+        component_fractions = {
+            "f_i_E_S": fractions["f_i_E_S"],
+            "f_i_ot": fractions["f_i_ot"],
+            "f_i_ft": fractions["f_i_ft"]
         }
 
-        notes: Dict[str, Any] = {
+        notes = {
             "reference_stage": "Atlas V (LOX/RP1)",
-            "input_R": mission_mass_ratio,
-            "input_Psi": mission_T_W
+            "input_R": fractions["R"],
+            "input_Psi": stage_params.initial_twr
         }
 
         return StageModelResult(
@@ -306,13 +361,35 @@ class KibbeyStageModel(BaseStageModel):
             notes=notes
         )
 
+def print_mass_budget_report(budget: StageMassBudget, label: str):
+    """Helper to nicely print the full mass budget."""
+    print(f"\n--- {label} ---")
+    print(f"  {'GROSS MASS (Mo)':<25}: {budget['gross_mass_kg']:12,.1f} kg")
+    print(f"  {'  Payload Mass':<25}: {budget['payload_mass_kg']:12,.1f} kg")
+    print(f"  {'  Propellant Mass':<25}: {budget['propellant_mass_kg']:12,.1f} kg")
+    print(f"  {'INERT MASS (Mi)':<25}: {budget['total_inert_mass_kg']:12,.1f} kg")
+
+    print("-" * 45)
+    print(f"  {'Component Breakdown':<25} | {'Mass (kg)':>12} | {'% Inert':>8}")
+    print("-" * 45)
+
+    total_inert = budget['total_inert_mass_kg']
+    for name, mass in budget['components_kg'].items():
+        if mass > 0:
+            pct = (mass / total_inert * 100) if total_inert > 0 else 0
+            print(f"  {name:<25} | {mass:12,.1f} | {pct:7.1f}%")
+
+    print("-" * 45)
+    # Note specific to Kibbey
+    print("  * Note: 'Propulsion' includes Engine + Structure (f_i_E&S)")
+    print("=" * 70)
 
 if __name__ == "__main__":
     """
     Standalone runner for the Kibbey (2015) Stage Model.
     """
 
-    print("[__main__] Running Kibbey Stage Model Standalone Analysis...")
+    print(" Running Kibbey Stage Model Standalone Analysis...")
     print("=" * 70)
 
     # --- 1. Get Engine & Stage Definitions ---
@@ -320,27 +397,29 @@ if __name__ == "__main__":
     # the extrapolation effect, but using the *same* stage/mission.
 
     try:
-        # Get the default custom rocket parameters
+        # --- 1. Get Engine & Stage Definitions ---
         engine_params, stage_params = vehicle_definitions.default_rocket_params()
 
         # Get a LOX/LH2 engine for comparison
-        lh2_engine_params = vehicle_definitions.get_ssme_engine()
+        ssme_engine_params = vehicle_definitions.get_ssme_engine()
 
-        # --- 2. Instantiate and Run Model ---
+        # --- 2. Instantiate Model ---
         model = KibbeyStageModel()
 
         # --- Test 1: Default (LOX/LCH4) Engine ---
         print("\n--- Test 1: Default (LOX/LCH4) Engine ---")
-        # Use the inherited run method
-        model.run_single_stage_analysis(engine_params, stage_params)
+
+        budget_1 = model.calculate_full_stage_mass_budget(engine_params, stage_params)
+        print_mass_budget_report(budget_1, "Test 1: Default (LOX/LCH4)")
 
         # --- Test 2: SSME (LOX/LH2) Engine ---
         print("\n--- Test 2: SSME (LOX/LH2) Engine (Extrapolation) ---")
         # Use the same stage params, but the LH2 engine
-        model.run_single_stage_analysis(lh2_engine_params, stage_params)
+        budget_2 = model.calculate_full_stage_mass_budget(ssme_engine_params, stage_params)
+        print_mass_budget_report(budget_2, "Test 2: SSME (LOX/LH2)")
 
     except Exception as e:
-        print(f"\n[__main__] ERROR during standalone analysis: {e}")
+        print(f"\n ERROR during standalone analysis: {e}")
 
     print("=" * 70)
-    print("[__main__] Standalone analysis complete.")
+    print(" Standalone analysis complete.")
