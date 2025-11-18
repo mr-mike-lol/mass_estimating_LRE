@@ -105,24 +105,20 @@ class AkinPropulsionModel(BaseEngineModel):
         if params.chamber_pressure_Pa <= 0:
             raise ValueError("Chamber pressure must be > 0 for Akin gimbal calculation.")
 
-        # 1. Engine Mass
-        # Term 1 from formula
-        term1 = 7.81e-4 * params.thrust_vac_N
-        # Term 2 from formula
-        term2 = 3.37e-5 * params.thrust_vac_N * (params.expansion_ratio ** 0.5)
-        # Term 3 from formula
-        term3 = 59.0
-        m_engine = term1 + term2 + term3
+        # Call the individual MER functions
+        m_engine = self.estimate_engine_mass_mer(
+            params.thrust_vac_N,
+            params.expansion_ratio
+        )
 
-        # 2. Thrust Structure Mass
-        # Formula from source
-        m_thrust_structure = 2.55e-4 * params.thrust_vac_N
+        m_thrust_structure = self.estimate_thrust_structure_mass(
+            params.thrust_vac_N
+        )
 
-        # 3. Gimbal Mass
-        # Ratio T(N) / P_0(Pa) from formula
-        ratio = params.thrust_vac_N / params.chamber_pressure_Pa
-        # Full formula from source
-        m_gimbals = 237.8 * (ratio ** 0.9375)
+        m_gimbals = self.estimate_gimbal_mass(
+            params.thrust_vac_N,
+            params.chamber_pressure_Pa
+        )
 
         total_mass = m_engine + m_thrust_structure + m_gimbals
 
@@ -142,6 +138,76 @@ class AkinPropulsionModel(BaseEngineModel):
                                  " Universal (all engines), but highly empirical."
             }
         )
+
+    @staticmethod
+    def estimate_engine_mass_mer(thrust_N: float, expansion_ratio: float) -> float:
+        """
+        Estimates liquid pump-fed rocket engine mass based on thrust and expansion ratio.
+        Returns only the total mass.
+
+        Reference:
+        Mass Estimating Relations (Akin, ENAE 791), Page 25.
+        Formula: M_Rocket_Engine(kg) = 7.81e-4*T(N) + 3.37e-5*T(N)*sqrt(Ae/At) + 59
+
+        Args:
+            thrust_N (float): Engine thrust in Newtons.
+            expansion_ratio (float): Nozzle expansion ratio (Ae/At).
+
+        Returns:
+            float: Estimated engine-only mass in kg.
+        """
+        # Term 1 from formula
+        term1 = 7.81e-4 * thrust_N
+        # Term 2 from formula
+        term2 = 3.37e-5 * thrust_N * (expansion_ratio ** 0.5)
+        # Term 3 from formula
+        term3 = 59.0
+
+        total_mass = term1 + term2 + term3
+
+        return total_mass
+
+    @staticmethod
+    def estimate_thrust_structure_mass(total_thrust_N: float) -> float:
+        """
+        Estimates thrust structure mass based on total vehicle thrust.
+
+        Reference:
+        Mass Estimating Relations (Akin, ENAE 791), Page 25.
+        Formula: M_Thrust_Structure(kg) = 2.55e-4*T(N)
+
+        Args:
+            total_thrust_N (float): Total thrust of all engines supported by the structure, in Newtons.
+
+        Returns:
+            float: Estimated thrust structure mass in kg.
+        """
+        # Formula from source
+        return 2.55e-4 * total_thrust_N
+
+    @staticmethod
+    def estimate_gimbal_mass(engine_thrust_N: float, chamber_pressure_Pa: float) -> float:
+        """
+        Estimates gimbal mass for a single engine.
+
+        Reference:
+        Mass Estimating Relations (Akin, ENAE 791), Page 26.
+        Formula: M_Gimbals(kg) = 237.8 * [T(N) / P_c(Pa)]^0.9375
+
+        Args:
+            engine_thrust_N (float): Thrust of a single engine in Newtons.
+            chamber_pressure_Pa (float): Engine chamber pressure in Pascals.
+
+        Returns:
+            float: Estimated gimbal mass in kg.
+        """
+        if chamber_pressure_Pa <= 0:
+            raise ValueError("Chamber pressure must be > 0 for gimbal calculation")
+
+        # Ratio T(N) / P_0(Pa) from formula
+        ratio = engine_thrust_N / chamber_pressure_Pa
+        # Full formula from source
+        return 237.8 * (ratio ** 0.9375)
 
 
 # --- 2. Stage Model ---
