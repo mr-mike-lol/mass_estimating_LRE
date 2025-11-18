@@ -40,15 +40,31 @@ Cons:
 """
 
 import math
-from typing import Literal, Dict, Tuple, Any
-from models.common_params import EngineParams, StageParams
-from models.base import BaseEngineModel, ModelResult
-from models.common_params import (
-    DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4, G0
-)
+from typing import Literal, Dict, Tuple, Any, NamedTuple, Optional
+
+from models.common_params import EngineParams, StageParams, G0
+from models.base import BaseEngineModel, BaseStageModel, ModelResult, StageMassBudget, StageModelResult
 import vehicle_definitions
 
-# --- Public Interface Class (Integration Logic) ---
+
+# --- Helper Data Structures ---
+
+class GeometryResult(NamedTuple):
+    """
+    Holds calculated geometric properties to share between calculation steps.
+    """
+    r_lox: float
+    h_lox: float
+    area_lox_insulation: float  # Effective area for insulation calculation
+    r_fuel: float
+    h_fuel: float
+    area_fuel_insulation: float  # Effective area for insulation calculation
+    total_length: float
+    vehicle_radius_fairing: float  # Radius used for fairing calculations
+    m_gross: float  # Cached gross mass for avionics/wiring
+
+
+# --- 1. Propulsion Model ---
 
 class AkinPropulsionModel(BaseEngineModel):
     """
@@ -69,6 +85,14 @@ class AkinPropulsionModel(BaseEngineModel):
         Estimates the total propulsion system mass (Engine + Thrust
         Structure + Gimbals).
 
+        References:
+        1. Engine: Mass Estimating Relations (Akin, ENAE 791), Page 25.
+           Formula: M_Rocket_Engine(kg) = 7.81e-4*T(N) + 3.37e-5*T(N)*sqrt(Ae/At) + 59
+        2. Structure: Page 25.
+           Formula: M_Thrust_Structure(kg) = 2.55e-4*T(N)
+        3. Gimbals: Page 26.
+           Formula: M_Gimbals(kg) = 237.8 * [T(N) / P_c(Pa)]^0.9375
+
         Args:
             params (EngineParams): The standardized dataclass. This model
                                    uses thrust, expansion_ratio, and
@@ -77,27 +101,28 @@ class AkinPropulsionModel(BaseEngineModel):
         Returns:
             ModelResult: A TypedDict containing the total mass and
                          component breakdown.
-
-        Raises:
-            ValueError: If chamber pressure is not a positive number.
         """
         if params.chamber_pressure_Pa <= 0:
             raise ValueError("Chamber pressure must be > 0 for Akin gimbal calculation.")
 
-        # Call the individual MER functions
-        m_engine = estimate_engine_mass_mer(
-            params.thrust_vac_N,
-            params.expansion_ratio
-        )
+        # 1. Engine Mass
+        # Term 1 from formula
+        term1 = 7.81e-4 * params.thrust_vac_N
+        # Term 2 from formula
+        term2 = 3.37e-5 * params.thrust_vac_N * (params.expansion_ratio ** 0.5)
+        # Term 3 from formula
+        term3 = 59.0
+        m_engine = term1 + term2 + term3
 
-        m_thrust_structure = estimate_thrust_structure_mass(
-            params.thrust_vac_N
-        )
+        # 2. Thrust Structure Mass
+        # Formula from source
+        m_thrust_structure = 2.55e-4 * params.thrust_vac_N
 
-        m_gimbals = estimate_gimbal_mass(
-            params.thrust_vac_N,
-            params.chamber_pressure_Pa
-        )
+        # 3. Gimbal Mass
+        # Ratio T(N) / P_0(Pa) from formula
+        ratio = params.thrust_vac_N / params.chamber_pressure_Pa
+        # Full formula from source
+        m_gimbals = 237.8 * (ratio ** 0.9375)
 
         total_mass = m_engine + m_thrust_structure + m_gimbals
 
@@ -119,687 +144,463 @@ class AkinPropulsionModel(BaseEngineModel):
         )
 
 
-# --- Individual MER Functions (Calculation Logic) ---
+# --- 2. Stage Model ---
 
-def estimate_engine_mass_mer(thrust_N: float, expansion_ratio: float) -> float:
+class AkinStageModel(BaseStageModel):
     """
-    Estimates liquid pump-fed rocket engine mass based on thrust and expansion ratio.
-    Returns only the total mass.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 25.
-    Formula: M_Rocket_Engine(kg) = 7.81e-4*T(N) + 3.37e-5*T(N)*sqrt(Ae/At) + 59
-
-    Args:
-        thrust_N (float): Engine thrust in Newtons.
-        expansion_ratio (float): Nozzle expansion ratio (Ae/At).
-
-    Returns:
-        float: Estimated engine-only mass in kg.
-    """
-    # Term 1 from formula
-    term1 = 7.81e-4 * thrust_N
-    # Term 2 from formula
-    term2 = 3.37e-5 * thrust_N * (expansion_ratio ** 0.5)
-    # Term 3 from formula
-    term3 = 59.0
-
-    total_mass = term1 + term2 + term3
-
-    return total_mass
-
-
-def estimate_thrust_structure_mass(total_thrust_N: float) -> float:
-    """
-    Estimates thrust structure mass based on total vehicle thrust.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 25.
-    Formula: M_Thrust_Structure(kg) = 2.55e-4*T(N)
-
-    Args:
-        total_thrust_N (float): Total thrust of all engines supported by the structure, in Newtons.
-
-    Returns:
-        float: Estimated thrust structure mass in kg.
-    """
-    # Formula from source
-    return 2.55e-4 * total_thrust_N
-
-
-def estimate_propellant_tank_mass(volume_m3: float, propellant: Literal["LH2", "LOX", "RP1"]) -> float:
-    """
-    Estimates propellant tank mass based on propellant volume.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 6.
-    Formulas derived from regression plot on Page 5.
-    M_LH2_Tank(kg) = 9.09 * V_LH2(m^3)
-    M_Other_Tank(kg) = 12.16 * V_prop(m^3) (for LOX, RP1)
-
-    Args:
-        volume_m3 (float): Volume of the propellant in cubic meters.
-        propellant (Literal["LH2", "LOX", "RP1"]): Type of propellant.
-
-    Returns:
-        float: Estimated tank mass in kg.
-    """
-    if propellant == "LH2":
-        # M_LH2_Tank(kg) = 9.09 * V_LH2(m^3)
-        return 9.09 * volume_m3
-    else:
-        # M_Tank(kg) = 12.16 * V_prop(m^3)
-        # This is used for LOX and RP-1 per the regression plot.
-        return 12.16 * volume_m3
-
-
-def estimate_propellant_tank_mass_from_mass(propellant_mass_kg: float,
-                                            propellant: Literal["LH2", "LOX", "RP1"]) -> float:
-    """
-    Estimates propellant tank mass based on propellant mass (alternative MER).
-    This is the MER used in the SSTO example calcs.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 7.
-    Formulas:
-    M_LH2_Tank(kg) = 0.128 * M_LH2(kg)
-    M_LOX_Tank(kg) = 0.0107 * M_LOX(kg)
-    M_RP1_Tank(kg) = 0.0148 * M_RP1(kg)
-    M_RP1_Tank(kg) = 0.0148 * M_RP1(kg) estimated
-
-    Args:
-        propellant_mass_kg (float): Mass of the propellant in kg.
-        propellant (Literal["LH2", "LOX", "RP1"]): Type of propellant.
-
-    Returns:
-        float: Estimated tank mass in kg.
-    """
-    if propellant == "LH2":
-        # M_LH2_Tank(kg) = 0.128 * M_LH2(kg)
-        return 0.128 * propellant_mass_kg
-    elif propellant == "LOX":
-        # M_LOX_Tank(kg) = 0.0107 * M_LOX(kg)
-        return 0.0107 * propellant_mass_kg
-    elif propellant == "RP1":
-        # M_RP1_Tank(kg) = 0.0148 * M_RP1(kg)
-        return 0.0148 * propellant_mass_kg
-    elif propellant == "LCH4":
-        # M_RP1_Tank(kg) = 0.0148 * M_RP1(kg)
-        return 0.0148 * propellant_mass_kg
-    else:
-        # Raise error other types, though not specified in this MER
-        raise ValueError(f"Unknown propellant type for mass-based tank MER: {propellant}")
-
-
-def estimate_cryo_insulation_mass(tank_surface_area_m2: float, propellant: Literal["LH2", "LOX"]) -> float:
-    """
-    Estimates cryogenic insulation mass based on tank surface area.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 8.
-    Formulas:
-    M_LH2_Insulation(kg) = 2.88 * A_tank(m^2)
-    M_LOX_Insulation(kg) = 1.123 * A_tank(m^2)
-
-    Args:
-        tank_surface_area_m2 (float): Surface area of the tank in square meters.
-        propellant (Literal["LH2", "LOX"]): Type of cryogenic propellant.
-
-    Returns:
-        float: Estimated insulation mass in kg.
-    """
-    if propellant == "LH2":
-        # M_LH2_Insulation <kg> = 2.88 <kg/m^2> * A_tank
-        return 2.88 * tank_surface_area_m2
-    elif propellant == "LOX":
-        # M_LOX_Insulation <kg> = 1.123 <kg/m^2> * A_tank
-        return 1.123 * tank_surface_area_m2
-    elif propellant == "LCH4":
-        # estimated, needs double-check; cz it's cryogenic
-        return 1.0 * tank_surface_area_m2
-    else:
-        return 0.0  # No insulation needed for non-cryo
-
-
-def estimate_pressurized_gas_tank_mass(volume_m3: float, tank_type: Literal["COPV", "Titanium"]) -> float:
-    """
-    Estimates mass for high-pressure gas tanks (e.g., pressurant tanks).
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 13.
-    Based on regression plot Page 12.
-    Formulas:
-    M_COPV_Tank(kg) = 115.3 * V(m^3) + 3
-    M_Titanium_Tank(kg) = 299.8 * V(m^3) + 2
-
-    Args:
-        volume_m3 (float): Volume of the contents in cubic meters.
-        tank_type (Literal["COPV", "Titanium"]): Type of high-pressure tank.
-
-    Returns:
-        float: Estimated tank mass in kg.
-    """
-    if tank_type == "COPV":
-        # M_COPV Tank(kg) = 115.3 * V_contents(m^3) + 3
-        return 115.3 * volume_m3 + 3.0
-    elif tank_type == "Titanium":
-        # M_Titanium_Tank(kg) = 299.8 * V_contents(m^3) + 2
-        return 299.8 * volume_m3 + 2.0
-    else:
-        # Default to COPV if type is unknown
-        return 115.3 * volume_m3 + 3.0
-
-
-def estimate_small_liquid_tank_mass(volume_m3: float, tank_type: Literal["Bare", "PMD", "Diaphragm"]) -> float:
-    """
-    Estimates mass for smaller storable liquid tanks.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 15.
-    Based on regression plot Page 14.
-    Formulas:
-    M_Bare_Tank(kg) = 27.34 * V(m^3) + 2
-    M_PMD_Tank(kg) = 34.69 * V(m^3) + 3
-    M_Diaphragm_Tank(kg) = 71.17 * V(m^3) + 3
-
-    Args:
-        volume_m3 (float): Volume of the contents in cubic meters.
-        tank_type (Literal["Bare", "PMD", "Diaphragm"]): Type of small tank.
-
-    Returns:
-        float: Estimated tank mass in kg.
-    """
-    if tank_type == "Bare":
-        # M_Bare Tank(kg) = 27.34 * V_contents(m^3) + 2
-        return 27.34 * volume_m3 + 2.0
-    elif tank_type == "PMD":
-        # M_PMD Tank(kg) = 34.69 * V_contents(m^3) + 3
-        return 34.69 * volume_m3 + 3.0
-    elif tank_type == "Diaphragm":
-        # M_Diaphragm Tank(kg) = 71.17 * V_contents(m^3) + 3
-        return 71.17 * volume_m3 + 3.0
-    else:
-        # Default to PMD as a reasonable intermediate
-        return 34.69 * volume_m3 + 3.0
-
-
-def estimate_fairing_mass(fairing_surface_area_m2: float) -> float:
-    """
-    Estimates fairing/shroud mass based on surface area.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 20.
-    Formula: M_fairing(kg) = 4.95 * (A_fairing(m^2))^1.15
-
-    Args:
-        fairing_surface_area_m2 (float): Surface area of the fairing in square meters.
-
-    Returns:
-        float: Estimated fairing mass in kg.
-    """
-    if fairing_surface_area_m2 <= 0:
-        return 0.0
-    # Formula from source
-    return 4.95 * (fairing_surface_area_m2 ** 1.15)
-
-
-def estimate_avionics_mass(vehicle_gross_mass_kg: float) -> float:
-    """
-    Estimates avionics mass based on vehicle gross mass.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 20.
-    Formula: M_avionics(kg) = 10 * (M_o(kg))^0.361
-
-    Args:
-        vehicle_gross_mass_kg (float): Vehicle gross mass (M_o) in kg.
-
-    Returns:
-        float: Estimated avionics mass in kg.
-    """
-    if vehicle_gross_mass_kg <= 0:
-        return 0.0
-    # Formula from source
-    return 10.0 * (vehicle_gross_mass_kg ** 0.361)
-
-
-def estimate_wiring_mass(vehicle_gross_mass_kg: float, vehicle_length_m: float) -> float:
-    """
-    Estimates wiring mass based on vehicle gross mass and length.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 20.
-    Formula: M_wiring(kg) = 1.058 * sqrt(M_o(kg)) * l^0.25
-
-    Args:
-        vehicle_gross_mass_kg (float): Vehicle gross mass (M_o) in kg.
-        vehicle_length_m (float): Vehicle total length (l) in meters.
-
-    Returns:
-        float: Estimated wiring mass in kg.
-    """
-    if vehicle_gross_mass_kg <= 0 or vehicle_length_m <= 0:
-        return 0.0
-    # Formula from source
-    return 1.058 * (vehicle_gross_mass_kg ** 0.5) * (vehicle_length_m ** 0.25)
-
-
-def estimate_srm_casing_mass(propellant_mass_kg: float) -> float:
-    """
-    Estimates Solid Rocket Motor (SRM) casing mass from propellant mass.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 25.
-    Formula: M_Motor_Casing = 0.135 * M_propellants
-
-    Args:
-        propellant_mass_kg (float): Mass of the solid propellant in kg.
-
-    Returns:
-        float: Estimated motor casing mass in kg.
-    """
-    # Formula from source
-    return 0.135 * propellant_mass_kg
-
-
-def estimate_gimbal_mass(engine_thrust_N: float, chamber_pressure_Pa: float) -> float:
-    """
-    Estimates gimbal mass for a single engine.
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 26.
-    Formula: M_Gimbals(kg) = 237.8 * [T(N) / P_c(Pa)]^0.9375
-
-    Args:
-        engine_thrust_N (float): Thrust of a single engine in Newtons.
-        chamber_pressure_Pa (float): Engine chamber pressure in Pascals.
-
-    Returns:
-        float: Estimated gimbal mass in kg.
-    """
-    if chamber_pressure_Pa <= 0:
-        raise ValueError("Chamber pressure must be > 0 for gimbal calculation")
-
-    # Ratio T(N) / P_0(Pa) from formula
-    ratio = engine_thrust_N / chamber_pressure_Pa
-    # Full formula from source
-    return 237.8 * (ratio ** 0.9375)
-
-
-def estimate_gimbal_torque(engine_thrust_N: float, chamber_pressure_Pa: float) -> float:
-    """
-    Estimates gimbal torque for a single engine. (Note: Not a mass relation).
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 26.
-    Formula: Tau_Gimbals(N*m) = 990,000 * [T(N) / P_c(Pa)]^1.25
-
-    Args:
-        engine_thrust_N (float): Thrust of a single engine in Newtons.
-        chamber_pressure_Pa (float): Engine chamber pressure in Pascals.
-
-    Returns:
-        float: Estimated gimbal torque in N*m.
-    """
-    if chamber_pressure_Pa <= 0:
-        raise ValueError("Chamber pressure must be > 0 for gimbal torque calculation")
-
-    # Ratio T(N) / P_0(Pa) from formula
-    ratio = engine_thrust_N / chamber_pressure_Pa
-    # Full formula from source
-    return 990_000 * (ratio ** 1.25)
-
-
-# --- Geometry Helper Functions ---
-# These functions implement the geometry formulas used in the SSTO example
-# and can be used for the "optional" fairing calculations.
-
-def _calculate_sphere_geom(propellant_mass: float, propellant_density: float) -> Tuple[float, float]:
-    """
-    (Internal) Calculates the radius and surface area of a spherical tank.
-    This is a helper function based on the logic from the article.
-
-    Reference:
-    Logic derived from examples on Page 9 and Page 10.
-    Assumes a spherical tank: V = M / rho
-    r = (V / (4pi/3))^(1/3)
-    A = 4 * pi * r^2
-
-    Args:
-        propellant_mass (float): Mass of the propellant in kg.
-        propellant_density (float): Density of the propellant in kg/m^3.
-
-    Returns:
-        Tuple[float, float]: (radius_m, area_m2)
-    """
-    if propellant_density == 0 or propellant_mass == 0:
-        return 0.0, 0.0
-    # V = M / rho
-    volume = propellant_mass / propellant_density
-    # r = (V / (4pi/3))^(1/3)
-    sphere_radius = (volume / (4 * math.pi / 3)) ** (1 / 3)
-    # A = 4 * pi * r^2
-    area = 4 * math.pi * (sphere_radius ** 2)
-    return sphere_radius, area
-
-
-def _calculate_cylinder_geom(propellant_mass: float, propellant_density: float, radius_m: float) -> Tuple[
-    float, float, float]:
-    """
-    (Internal) Calculates the height and surface area of a cylindrical tank
-    with flat end caps, given a fixed radius.
-
-    Reference:
-    Logic for 2nd/3rd pass, e.g., Page 31.
-    Assumes a cylindrical tank: V = M / rho
-    h = V / (pi * r^2)
-    A_side = 2 * pi * r * h
-    A_caps = 2 * (pi * r^2) (Assuming two end caps)
-    A_total = A_side + A_caps
-
-    Args:
-        propellant_mass (float): Mass of the propellant in kg.
-        propellant_density (float): Density of the propellant in kg/m^3.
-        radius_m (float): The fixed radius of the vehicle/tank.
-
-    Returns:
-        Tuple[float, float, float]: (radius_m, area_m2, height_m)
-    """
-    if propellant_density == 0 or propellant_mass == 0 or radius_m == 0:
-        return radius_m, 0.0, 0.0
-
-    # V = M / rho
-    volume = propellant_mass / propellant_density
-    # h = V / (pi * r^2)
-    height = volume / (math.pi * radius_m ** 2)
-
-    # A_side = 2 * pi * r * h
-    area_side = 2 * math.pi * radius_m * height
-    # A_caps = 2 * (pi * r^2)
-    area_caps = 2 * (math.pi * radius_m ** 2)
-
-    # A_total = A_side + A_caps
-    total_area = area_side + area_caps
-
-    return radius_m, total_area, height
-
-
-def calculate_cone_area(radius: float, height: float) -> float:
-    """
-    Calculates the surface area of a cone (excluding the base).
-    A = pi * r * sqrt(r^2 + h^2)
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 21.
-
-    Args:
-        radius (float): Base radius of the cone (r).
-        height (float): Height of the cone (h).
-
-    Returns:
-        float: Surface area in m^2.
-    """
-    if radius <= 0 or height <= 0:
-        return 0.0
-    return math.pi * radius * math.sqrt(radius ** 2 + height ** 2)
-
-
-def calculate_cylinder_area(radius: float, height: float) -> float:
-    """
-    Calculates the surface area of a cylinder's side wall.
-    A = 2 * pi * r * h
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 21.
-
-    Args:
-        radius (float): Radius of the cylinder (r).
-        height (float): Height of the cylinder (h).
-
-    Returns:
-        float: Surface area in m^2.
-    """
-    if radius <= 0 or height <= 0:
-        return 0.0
-    return 2 * math.pi * radius * height
-
-
-def calculate_frustum_area(radius1: float, radius2: float, height: float) -> float:
-    """
-    Calculates the surface area of a cone frustum.
-    A = pi * (r1 + r2) * sqrt((r1 - r2)^2 + h^2)
-
-    Reference:
-    Mass Estimating Relations (Akin, ENAE 791), Page 21.
-
-    Args:
-        radius1 (float): Radius of the first base (r1).
-        radius2 (float): Radius of the second base (r2).
-        height (float): Height of the frustum (h).
-
-    Returns:
-        float: Surface area in m^2.
-    """
-    if height <= 0:
-        return 0.0
-    return math.pi * (radius1 + radius2) * math.sqrt((radius1 - radius2) ** 2 + height ** 2)
-
-
-# --- Runner Function ---
-
-
-def run_akin_ssto_example(engine: EngineParams, stage: StageParams) -> Dict[str, Any]:
-    """
-    Runs the 1st-3rd Pass SSTO mass budget analysis based on the
-    "Mass Estimating Relations" (Akin, ENAE 791) PDF.
-
-    This function follows the logic from Page 3 to Page 30+.
-    It now accepts EngineParams and StageParams dataclasses.
-
-    Args:
-        engine (EngineParams): The engine configuration.
-        stage (StageParams): The stage and mission configuration.
-
-    Returns:
-        Dict[str, Any]: A dictionary containing the detailed mass budget.
+    Implements the full stage mass estimation using Akin's MERs.
+    Calculates tanks, insulation, fairings, avionics, and wiring.
     """
 
-    # --- Step 1: Vehicle-Level 1st Pass (Page 3) ---
-    Ve = engine.isp_vac_s * G0
-    r = math.exp(-stage.delta_v_ms / Ve)
-    lambda_payload = r - stage.initial_delta
-    if lambda_payload <= 0:
-        raise ValueError(f"Infeasible mission: delta ({stage.initial_delta}) is too high for this dV/Isp.")
+    def __init__(self):
+        self.propulsion_model = AkinPropulsionModel()
+        # Cache for geometry to share between abstract methods
+        self._cached_geometry: Optional[GeometryResult] = None
+        self._cached_params_key: Optional[Tuple] = None
 
-    M_o = stage.payload_mass_kg / lambda_payload
-    M_i_initial_guess = stage.initial_delta * M_o
-    M_p = M_o * (1 - r)
+    @property
+    def model_name(self) -> str:
+        return "Akin (1991) - Stage Model"
 
-    # --- Step 2: Propellant Calcs (Page 4) ---
-    M_lh2 = M_p / (1 + engine.mixture_ratio)
-    M_lox = M_p * engine.mixture_ratio / (1 + engine.mixture_ratio)
+    def _ensure_geometry(self, engine: EngineParams, stage: StageParams) -> GeometryResult:
+        """
+        Helper: Calculates and caches geometry if params have changed.
+        This allows _calculate_structural_mass and others to share data efficiently.
+        """
+        # Check if we already have valid cached geometry for these inputs
+        current_key = (id(engine), id(stage), stage.payload_mass_kg, stage.delta_v_ms)
+        if self._cached_geometry and self._cached_params_key == current_key:
+            return self._cached_geometry
 
-    # --- Step 3: Tank Mass (Page 7, 9, 10) ---
-    M_lox_tank = estimate_propellant_tank_mass_from_mass(M_lox, "LOX")
-    M_lh2_tank = estimate_propellant_tank_mass_from_mass(M_lh2, "LH2")
+        # 1. Initial Sizing (Rocket Equation) to get Propellant Mass
+        m_gross, m_prop, _, _ = self._calculate_initial_sizing(engine, stage)
+        m_ox, m_fuel = self._get_propellant_mass_split(engine, m_prop)
 
-    # --- Step 4: Insulation Mass (Page 8-10, 31) ---
-    # This logic depends on the 'tank_geometry' flag
+        # 2. Calculate Geometry
+        geo = self._calculate_geometry_internal(m_ox, m_fuel, m_gross, engine, stage)
 
-    # Tank radii and heights (initially 0)
-    r_lox_tank_m = 0.0
-    A_lox_tank = 0.0
-    h_lox_tank_m = 0.0
-    r_lh2_tank_m = 0.0
-    A_lh2_tank = 0.0
-    h_lh2_tank_m = 0.0
-    vehicle_radius_for_fairings_m = 0.0
+        # Cache and return
+        self._cached_geometry = geo
+        self._cached_params_key = current_key
+        return geo
 
-    if stage.tank_geometry == "Sphere":
-        # Page 9, Page 10
-        r_lox_tank_m, A_lox_tank = _calculate_sphere_geom(M_lox, DENSITY_LOX)
-        r_lh2_tank_m, A_lh2_tank = _calculate_sphere_geom(M_lh2, DENSITY_LH2)
-        # For 1st pass, fairings are based on respective tank radii
-        # We use r_lh2_tank as the "base" radius
-        vehicle_radius_for_fairings_m = r_lh2_tank_m
+    # --- Abstract Method Implementations ---
 
-    elif stage.tank_geometry == "Cylinder":
-        if stage.vehicle_diameter_m <= 0:
-            raise ValueError("vehicle_diameter_m must be > 0 for 'Cylinder' tank geometry")
+    def _calculate_tank_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """Required by BaseStageModel."""
+        # Ensure we have sizing data (even though tanks depend mostly on mass here)
+        _, m_prop, _, _ = self._calculate_initial_sizing(params, stage)
+        m_ox, m_fuel = self._get_propellant_mass_split(params, m_prop)
 
-        vehicle_radius_m = stage.vehicle_diameter_m / 2.0
-        vehicle_radius_for_fairings_m = vehicle_radius_m
+        ox_type, fuel_type = self._parse_propellant_types(params.propellant_type)
 
-        # Page 31
-        # Get the geometry (radius, total surface area, height)
-        # Note: The area returned by _calculate_cylinder_geom (A_..._geom)
-        # is the *total geometric area* (sides + 2 caps)
-        # and is NOT used for insulation per the PDF's logic.
-        r_lox_tank_m, _A_lox_tank_geom, h_lox_tank_m = _calculate_cylinder_geom(
-            M_lox, DENSITY_LOX, vehicle_radius_m
-        )
-        r_lh2_tank_m, _A_lh2_tank_geom, h_lh2_tank_m = _calculate_cylinder_geom(
-            M_lh2, DENSITY_LH2, vehicle_radius_m
+        m_ox_tank = self._estimate_tank_mass_mer(m_ox, ox_type)
+        m_fuel_tank = self._estimate_tank_mass_mer(m_fuel, fuel_type)
+
+        return m_ox_tank + m_fuel_tank
+
+    def _calculate_insulation_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """Required by BaseStageModel."""
+        geo = self._ensure_geometry(params, stage)
+        ox_type, fuel_type = self._parse_propellant_types(params.propellant_type)
+
+        m_ox_ins = self._estimate_insulation_mer(geo.area_lox_insulation, ox_type)
+        m_fuel_ins = self._estimate_insulation_mer(geo.area_fuel_insulation, fuel_type)
+        return m_ox_ins + m_fuel_ins
+
+    def _calculate_structural_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """Required by BaseStageModel (Fairings + Intertank)."""
+        geo = self._ensure_geometry(params, stage)
+
+        m_payload, m_inter, m_aft = self._calculate_fairings(geo, stage)
+        return m_payload + m_inter + m_aft
+
+    def _calculate_propulsion_system_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """Required by BaseStageModel."""
+        # Get Gross Mass for TWR calculation
+        m_gross, _, _, _ = self._calculate_initial_sizing(params, stage)
+
+        total_thrust_req = m_gross * G0 * stage.initial_twr
+        thrust_per_engine = total_thrust_req / stage.num_engines
+
+        # Create temporary engine params with scaled thrust
+        scaled_engine = EngineParams(
+            thrust_vac_N=thrust_per_engine,
+            isp_vac_s=params.isp_vac_s,
+            chamber_pressure_Pa=params.chamber_pressure_Pa,
+            expansion_ratio=params.expansion_ratio,
+            mixture_ratio=params.mixture_ratio,
+            propellant_type=params.propellant_type,
+            cycle_type=params.cycle_type,
+            fuel_density=params.fuel_density,
+            oxidizer_density=params.oxidizer_density,
+            safety_factor=params.safety_factor
         )
 
-        # --- PDF Pass 2/3 Insulation Area ---
-        # The PDF (Pages 31-32) implies the insulation mass for
-        # cylindrical tanks is *not* based on the cylinder's geometric
-        # area (side + 2 caps), but is instead based on the
-        # surface area of a sphere of the same radius (4 * pi * r^2).
-        # This is an empirical fix to match the PDF's mass budget.
-        # Based on reverse-engineering of Pass 2 (Page 32)
-        A_lox_tank = 4.0 * math.pi * (r_lox_tank_m ** 2)
-        A_lh2_tank = 4.0 * math.pi * (r_lh2_tank_m ** 2)
-    else:
-        raise ValueError(f"Unknown tank_geometry: {stage.tank_geometry}")
+        # Get single engine system mass
+        prop_result = self.propulsion_model.estimate_mass(scaled_engine)
 
-    # Page 8, Page 9
-    M_lox_insulation = estimate_cryo_insulation_mass(A_lox_tank, "LOX")
-    M_lh2_insulation = estimate_cryo_insulation_mass(A_lh2_tank, "LH2")
+        return prop_result['total_mass_kg'] * stage.num_engines
 
-    # --- Step 5: Fairing Mass (Page 20-23) ---
-    A_payload_fairing = 0.0
-    A_intertank_fairing = 0.0
-    A_aft_fairing = 0.0
+    def _calculate_avionics_and_power_mass(self, params: EngineParams, stage: StageParams) -> float:
+        """
+        Estimates avionics and wiring mass based on vehicle gross mass and length.
 
-    if stage.tank_geometry == "Sphere":
-        A_payload_fairing = calculate_cone_area(r_lox_tank_m, stage.payload_fairing_height_m)
-        A_intertank_fairing = calculate_frustum_area(r_lh2_tank_m, r_lox_tank_m, stage.intertank_fairing_height_m)
-        A_aft_fairing = calculate_cylinder_area(r_lh2_tank_m, stage.aft_fairing_height_m)
+        References:
+        1. Avionics: Mass Estimating Relations (Akin, ENAE 791), Page 20.
+           Formula: M_avionics(kg) = 10 * (M_o(kg))^0.361
+        2. Wiring: Mass Estimating Relations (Akin, ENAE 791), Page 20.
+           Formula: M_wiring(kg) = 1.058 * sqrt(M_o(kg)) * l^0.25
 
-    else:  # "Cylinder"
-        # All sections share the same radius
-        vehicle_radius_m = vehicle_radius_for_fairings_m
-        A_payload_fairing = calculate_cone_area(vehicle_radius_m, stage.payload_fairing_height_m)
-        # Intertank is now a cylinder
-        A_intertank_fairing = calculate_cylinder_area(vehicle_radius_m, stage.intertank_fairing_height_m)
-        A_aft_fairing = calculate_cylinder_area(vehicle_radius_m, stage.aft_fairing_height_m)
+        Args:
+            params (EngineParams): Engine parameters.
+            stage (StageParams): Stage parameters.
 
-    # Page 20, Page 23
-    M_payload_fairing = estimate_fairing_mass(A_payload_fairing)
-    M_intertank_fairing = estimate_fairing_mass(A_intertank_fairing)
-    M_aft_fairing = estimate_fairing_mass(A_aft_fairing)
+        Returns:
+            float: Total mass of avionics and wiring.
+        """
+        geo = self._ensure_geometry(params, stage)
+        m_gross = geo.m_gross
 
-    # --- Step 6: Avionics & Wiring (Page 20, 24) ---
+        if m_gross <= 0:
+            return 0.0
 
-    vehicle_length_l = 0.0
-    total_vehicle_length = 0.0
+        # Formula from source
+        m_avionics = 10.0 * (m_gross ** 0.361)
 
-    if stage.tank_geometry == "Sphere":
-        # Page 24 - Approx. length based on 7+7+7 fairing sections
-        vehicle_length_l = stage.payload_fairing_height_m + stage.intertank_fairing_height_m + stage.aft_fairing_height_m
-        total_vehicle_length = vehicle_length_l
-    else:
-        # Per PDF, M_wiring MER (l^0.25) seems to use tank lengths
-        vehicle_length_l = (
-                h_lox_tank_m +
-                h_lh2_tank_m
+        # Formula from source
+        if geo.total_length > 0:
+            m_wiring = 1.058 * (m_gross ** 0.5) * (geo.total_length ** 0.25)
+        else:
+            m_wiring = 0.0
+
+        return m_avionics + m_wiring
+
+    # --- Main Orchestrator (Optional Overrides) ---
+
+    def calculate_full_stage_mass_budget(self, engine: EngineParams, stage: StageParams) -> StageMassBudget:
+        """
+        We override this to provide the specific detailed breakdown used in the Akin PDF,
+        calling our implemented sub-methods.
+        """
+
+        # 1. Force geometry update first
+        geo = self._ensure_geometry(engine, stage)
+        m_gross = geo.m_gross
+        _, m_prop, m_inert_guess, lambda_payload = self._calculate_initial_sizing(engine, stage)
+
+        # 2. Call individual component methods to get totals
+        # For simplicity and detail, we'll use the internal helpers directly here for the breakdown.
+
+        # Propellant Split
+        m_ox, m_fuel = self._get_propellant_mass_split(engine, m_prop)
+        ox_type, fuel_type = self._parse_propellant_types(engine.propellant_type)
+
+        # Breakdown: Tanks
+        m_ox_tank = self._estimate_tank_mass_mer(m_ox, ox_type)
+        m_fuel_tank = self._estimate_tank_mass_mer(m_fuel, fuel_type)
+
+        # Breakdown: Insulation
+        m_ox_ins = self._estimate_insulation_mer(geo.area_lox_insulation, ox_type)
+        m_fuel_ins = self._estimate_insulation_mer(geo.area_fuel_insulation, fuel_type)
+
+        # Breakdown: Fairings
+        m_payload_fairing, m_intertank, m_aft_skirt = self._calculate_fairings(geo, stage)
+
+        # Breakdown: Avionics/Wiring
+        m_avionics = 10.0 * (m_gross ** 0.361)
+
+        m_wiring = 1.058 * (m_gross ** 0.5) * (geo.total_length ** 0.25) if geo.total_length > 0 else 0.0
+
+        # Breakdown: Propulsion
+        total_thrust_req = m_gross * G0 * stage.initial_twr
+        thrust_per_engine = total_thrust_req / stage.num_engines
+        scaled_engine = EngineParams(
+            thrust_vac_N=thrust_per_engine,
+            isp_vac_s=engine.isp_vac_s,
+            chamber_pressure_Pa=engine.chamber_pressure_Pa,
+            expansion_ratio=engine.expansion_ratio,
+            mixture_ratio=engine.mixture_ratio,
+            propellant_type=engine.propellant_type,
+            cycle_type=engine.cycle_type,
+            fuel_density=engine.fuel_density,
+            oxidizer_density=engine.oxidizer_density,
+            safety_factor=engine.safety_factor
         )
+        prop_result = self.propulsion_model.estimate_mass(scaled_engine)
 
-        # Total vehicle length includes fairings and tanks
-        total_vehicle_length = (
-                stage.payload_fairing_height_m +
-                h_lox_tank_m +
-                stage.intertank_fairing_height_m +
-                h_lh2_tank_m +
-                stage.aft_fairing_height_m
-        )
+        m_engines_total = prop_result['components_kg']["Engine (MER)"] * stage.num_engines
+        m_struct_total = prop_result['components_kg']["Thrust Structure (MER)"] * stage.num_engines
+        m_gimbals_total = prop_result['components_kg']["Gimbals (MER)"] * stage.num_engines
 
-    # Page 20, Page 24
-    M_avionics = estimate_avionics_mass(M_o)
-    # Page 20, Page 24
-    # M_wiring uses 'vehicle_length_l' (tank lengths only for Cylinder)
-    M_wiring = estimate_wiring_mass(M_o, vehicle_length_l)
-
-    # --- Step 7: Propulsion (Page 25-28) ---
-    Total_Thrust_T = M_o * G0 * stage.initial_twr
-    T_per_engine = Total_Thrust_T / stage.num_engines
-
-    M_per_engine = estimate_engine_mass_mer(T_per_engine, engine.expansion_ratio)
-    M_engines_total = M_per_engine * stage.num_engines
-
-    M_thrust_structure_per_eng = estimate_thrust_structure_mass(T_per_engine)
-    M_thrust_structure_total = M_thrust_structure_per_eng * stage.num_engines
-
-    M_gimbal_per_engine = estimate_gimbal_mass(T_per_engine, engine.chamber_pressure_Pa)
-    M_gimbals_total = M_gimbal_per_engine * stage.num_engines
-
-    # --- Step 8: Mass Summary (Page 30) ---
-    components = {
-        "LOX Tank": M_lox_tank,
-        "LH2 Tank": M_lh2_tank,
-        "LOX Insulation": M_lox_insulation,
-        "LH2 Insulation": M_lh2_insulation,
-        "Payload Fairing": M_payload_fairing,
-        "Intertank Fairing": M_intertank_fairing,
-        "Aft Fairing": M_aft_fairing,
-        "Engines": M_engines_total,
-        "Thrust Structure": M_thrust_structure_total,
-        "Gimbals": M_gimbals_total,
-        "Avionics": M_avionics,
-        "Wiring": M_wiring,
-    }
-    # Page 30
-    M_i_calculated = sum(components.values())
-    margin = (M_i_initial_guess - M_i_calculated) / M_i_initial_guess if M_i_initial_guess > 0 else 0
-
-    results = {
-        "engine_params": engine,
-        "stage_params": stage,
-        "initial_calcs": {
-            "M_o_kg": M_o,
-            "M_i_initial_guess_kg": M_i_initial_guess,
-            "M_propellant_kg": M_p,
-            "M_payload_kg": stage.payload_mass_kg,
-            "mass_ratio_r": r,
-            "payload_fraction_lambda": lambda_payload,
-        },
-        "propulsion": {
-            "total_thrust_N": Total_Thrust_T,
-            "thrust_per_engine_N": T_per_engine,
-            "mass_per_engine_kg": M_per_engine,
-            "gimbal_mass_per_engine_kg": M_gimbal_per_engine,
-            "thrust_structure_mass_per_engine_kg": M_thrust_structure_per_eng,
-        },
-        "geometry": {
-            "lox_tank_radius_m": r_lox_tank_m,
-            "lox_tank_area_m2": A_lox_tank,
-            "lox_tank_height_m": h_lox_tank_m,
-            "lh2_tank_radius_m": r_lh2_tank_m,
-            "lh2_tank_area_m2": A_lh2_tank,
-            "lh2_tank_height_m": h_lh2_tank_m,
-            "vehicle_length_approx_m": total_vehicle_length,
-        },
-        "mass_budget": {
-            "components_kg": components,
-            "total_inert_mass_calculated_kg": M_i_calculated,
-            "total_inert_mass_initial_guess_kg": M_i_initial_guess,
-            "design_margin_percent": margin * 100.0,
+        # 9. Compilation
+        components = {
+            "LOX Tank": m_ox_tank,
+            "LH2 Tank": m_fuel_tank,
+            "LOX Insulation": m_ox_ins,
+            "LH2 Insulation": m_fuel_ins,
+            "Payload Fairing": m_payload_fairing,
+            "Intertank Fairing": m_intertank,
+            "Aft Fairing": m_aft_skirt,
+            "Engines": m_engines_total,
+            "Thrust Structure": m_struct_total,
+            "Gimbals": m_gimbals_total,
+            "Avionics": m_avionics,
+            "Wiring": m_wiring
         }
-    }
-    return results
 
+        m_inert_calculated = sum(components.values())
+        margin = (m_inert_guess - m_inert_calculated) / m_inert_guess if m_inert_guess > 0 else 0.0
+
+        return StageMassBudget(
+            gross_mass_kg=m_gross,
+            propellant_mass_kg=m_prop,
+            total_inert_mass_kg=m_inert_calculated,
+            components_kg=components,
+            notes={
+                "M_inert_initial_guess_kg": m_inert_guess,
+                "design_margin_percent": margin * 100.0,
+                "lambda_payload": lambda_payload,
+                "vehicle_length_m": geo.total_length
+            }
+        )
+
+    def estimate_stage_fractions(self, params: EngineParams, stage_params: StageParams) -> StageModelResult:
+        """Interface compatibility method."""
+        budget = self.calculate_full_stage_mass_budget(params, stage_params)
+        m_prop = budget['propellant_mass_kg']
+
+        if m_prop <= 0:
+            return {"propellant_mass_fraction": 0.0, "total_inert_fraction": 0.0, "component_fractions": {},
+                    "notes": {}}
+
+        return {
+            "propellant_mass_fraction": m_prop / budget['gross_mass_kg'],
+            "total_inert_fraction": budget['total_inert_mass_kg'] / m_prop,
+            "component_fractions": {k: v / m_prop for k, v in budget['components_kg'].items()},
+            "notes": budget['notes']
+        }
+
+    # --- Internal Calculation Logic ---
+
+    def _calculate_initial_sizing(self, params: EngineParams, stage: StageParams) -> Tuple[float, float, float, float]:
+        """
+        Calculates M_gross, M_prop, M_inert_guess, and lambda.
+
+        Vehicle-Level 1st Pass (Page 3 of MERs).
+        """
+        ve = params.isp_vac_s * G0
+        r = math.exp(-stage.delta_v_ms / ve)
+        lambda_payload = r - stage.initial_delta
+
+        if lambda_payload <= 0:
+            raise ValueError(f"Infeasible mission: delta ({stage.initial_delta}) is too high for this dV/Isp.")
+
+        m_gross = stage.payload_mass_kg / lambda_payload
+        m_prop = m_gross * (1 - r)
+        m_inert_guess = stage.initial_delta * m_gross
+        return m_gross, m_prop, m_inert_guess, lambda_payload
+
+    def _calculate_geometry_internal(self, m_ox: float, m_fuel: float, m_gross: float,
+                                     engine: EngineParams, stage: StageParams) -> GeometryResult:
+        """
+        Determines dimensions based on tank_geometry setting (Sphere vs Cylinder).
+        Crucial for replicating Pass 1 vs Pass 2 logic.
+        """
+        r_lox, h_lox, a_lox_ins = 0.0, 0.0, 0.0
+        r_fuel, h_fuel, a_fuel_ins = 0.0, 0.0, 0.0
+        total_len = 0.0
+        vehicle_radius = 0.0
+
+        if stage.tank_geometry == "Sphere":
+            # Pass 1 Logic (Pages 9-10)
+            r_lox, a_lox_ins = self._geom_sphere(m_ox, engine.oxidizer_density)
+            r_fuel, a_fuel_ins = self._geom_sphere(m_fuel, engine.fuel_density)
+            h_lox = 2 * r_lox
+            h_fuel = 2 * r_fuel
+
+            # In Pass 1, fairings are sized roughly around the tanks
+            vehicle_radius = r_fuel
+
+            # Length approx (sum of fairing heights)
+            total_len = (stage.payload_fairing_height_m +
+                         stage.intertank_fairing_height_m +
+                         stage.aft_fairing_height_m)
+
+        elif stage.tank_geometry == "Cylinder":
+            # Pass 2 Logic (Page 31)
+            if stage.vehicle_diameter_m <= 0:
+                raise ValueError("vehicle_diameter_m must be > 0 for 'Cylinder' geometry")
+
+            vehicle_radius = stage.vehicle_diameter_m / 2.0
+
+            r_lox, _, h_lox = self._geom_cylinder(m_ox, engine.oxidizer_density, vehicle_radius)
+            r_fuel, _, h_fuel = self._geom_cylinder(m_fuel, engine.fuel_density, vehicle_radius)
+
+            # SPECIAL AKIN LOGIC (Pages 31-32):
+            # The PDF implies the insulation mass for cylindrical tanks is *not* based on
+            # the cylinder's geometric area (side + 2 caps), but is instead based on the
+            # surface area of a sphere of the same radius (4 * pi * r^2).
+            a_lox_ins = 4.0 * math.pi * (r_lox ** 2)
+            a_fuel_ins = 4.0 * math.pi * (r_fuel ** 2)
+
+            # Length includes tanks + fairings
+            total_len = (h_lox + h_fuel +
+                         stage.payload_fairing_height_m +
+                         stage.intertank_fairing_height_m +
+                         stage.aft_fairing_height_m)
+        else:
+            raise ValueError(f"Unknown geometry: {stage.tank_geometry}")
+
+        return GeometryResult(
+            r_lox=r_lox, h_lox=h_lox, area_lox_insulation=a_lox_ins,
+            r_fuel=r_fuel, h_fuel=h_fuel, area_fuel_insulation=a_fuel_ins,
+            total_length=total_len, vehicle_radius_fairing=vehicle_radius,
+            m_gross=m_gross
+        )
+
+    def _calculate_fairings(self, geo: GeometryResult, stage: StageParams) -> Tuple[float, float, float]:
+        """Calculates mass for Payload, Intertank, and Aft fairings."""
+        a_pay, a_int, a_aft = 0.0, 0.0, 0.0
+
+        if stage.tank_geometry == "Sphere":
+            # Cone + Frustum + Cylinder approach (Pass 1)
+            a_pay = self._area_cone(geo.r_lox, stage.payload_fairing_height_m)
+            a_int = self._area_frustum(geo.r_fuel, geo.r_lox, stage.intertank_fairing_height_m)
+            a_aft = self._area_cylinder(geo.r_fuel, stage.aft_fairing_height_m)
+        else:
+            # Constant radius approach (Pass 2)
+            r = geo.vehicle_radius_fairing
+            a_pay = self._area_cone(r, stage.payload_fairing_height_m)
+            a_int = self._area_cylinder(r, stage.intertank_fairing_height_m)
+            a_aft = self._area_cylinder(r, stage.aft_fairing_height_m)
+
+        return (
+            self._estimate_fairing_mass_mer(a_pay),
+            self._estimate_fairing_mass_mer(a_int),
+            self._estimate_fairing_mass_mer(a_aft)
+        )
+
+    # --- MER Static Helpers (The Physics/Formulas) ---
+
+    @staticmethod
+    def _get_propellant_mass_split(params: EngineParams, total_mass: float) -> Tuple[float, float]:
+        mr = params.mixture_ratio
+        m_ox = total_mass * (mr / (1 + mr))
+        m_fuel = total_mass * (1 / (1 + mr))
+        return m_ox, m_fuel
+
+    @staticmethod
+    def _parse_propellant_types(prop_type_str: str) -> Tuple[str, str]:
+        if "/" in prop_type_str:
+            parts = prop_type_str.split("/")
+            return parts[0], parts[1]
+        return "LOX", "LH2"
+
+    @staticmethod
+    def _estimate_tank_mass_mer(mass_kg: float, prop_type: str) -> float:
+        """
+        Estimates propellant tank mass based on propellant mass (alternative MER).
+        This is the MER used in the SSTO example calcs.
+
+        Reference:
+        Mass Estimating Relations (Akin, ENAE 791), Page 7.
+        Formulas:
+        M_LH2_Tank(kg) = 0.128 * M_LH2(kg)
+        M_LOX_Tank(kg) = 0.0107 * M_LOX(kg)
+        M_RP1_Tank(kg) = 0.0148 * M_RP1(kg)
+        """
+        if prop_type == "LH2":
+            return 0.128 * mass_kg
+        elif prop_type == "LOX":
+            return 0.0107 * mass_kg
+        else:
+            return 0.0148 * mass_kg  # RP1/LCH4
+
+    @staticmethod
+    def _estimate_insulation_mer(area_m2: float, prop_type: str) -> float:
+        """
+        Estimates cryogenic insulation mass based on tank surface area.
+
+        Reference:
+        Mass Estimating Relations (Akin, ENAE 791), Page 8.
+        Formulas:
+        M_LH2_Insulation(kg) = 2.88 * A_tank(m^2)
+        M_LOX_Insulation(kg) = 1.123 * A_tank(m^2)
+        """
+        if prop_type == "LH2":
+            return 2.88 * area_m2
+        elif prop_type == "LOX":
+            return 1.123 * area_m2
+        elif prop_type == "LCH4":
+            # estimated, needs double-check; cz it's cryogenic
+            return 1.0 * area_m2
+        return 0.0
+
+    @staticmethod
+    def _estimate_fairing_mass_mer(area_m2: float) -> float:
+        """
+        Estimates fairing/shroud mass based on surface area.
+
+        Reference:
+        Mass Estimating Relations (Akin, ENAE 791), Page 20.
+        Formula: M_fairing(kg) = 4.95 * (A_fairing(m^2))^1.15
+        """
+        if area_m2 <= 0: return 0.0
+        return 4.95 * (area_m2 ** 1.15)
+
+    # --- Geometry Static Helpers ---
+
+    @staticmethod
+    def _geom_sphere(mass: float, rho: float) -> Tuple[float, float]:
+        """
+        (Internal) Calculates the radius and surface area of a spherical tank.
+        Reference: Logic derived from examples on Page 9 and Page 10.
+        """
+        if rho <= 0: return 0.0, 0.0
+        vol = mass / rho
+        r = (vol / (4 * math.pi / 3)) ** (1 / 3)
+        area = 4 * math.pi * (r ** 2)
+        return r, area
+
+    @staticmethod
+    def _geom_cylinder(mass: float, rho: float, r: float) -> Tuple[float, float, float]:
+        """
+        (Internal) Calculates the height and surface area of a cylindrical tank.
+        Reference: Logic for 2nd/3rd pass, e.g., Page 31.
+        """
+        if rho <= 0 or r <= 0: return r, 0.0, 0.0
+        vol = mass / rho
+        h = vol / (math.pi * r ** 2)
+        area_geom = 2 * math.pi * r * h + 2 * math.pi * r ** 2
+        return r, area_geom, h
+
+    @staticmethod
+    def _area_cone(r: float, h: float) -> float:
+        """
+        Calculates the surface area of a cone (excluding the base).
+        Reference: Mass Estimating Relations (Akin, ENAE 791), Page 21.
+        """
+        return math.pi * r * math.sqrt(r ** 2 + h ** 2)
+
+    @staticmethod
+    def _area_cylinder(r: float, h: float) -> float:
+        """
+        Calculates the surface area of a cylinder's side wall.
+        Reference: Mass Estimating Relations (Akin, ENAE 791), Page 21.
+        """
+        return 2 * math.pi * r * h
+
+    @staticmethod
+    def _area_frustum(r1: float, r2: float, h: float) -> float:
+        """
+        Calculates the surface area of a cone frustum.
+        Reference: Mass Estimating Relations (Akin, ENAE 791), Page 21.
+        """
+        return math.pi * (r1 + r2) * math.sqrt((r1 - r2) ** 2 + h ** 2)
+
+
+# --- Reporting / Running Utils ---
 
 def _get_pdf_reference_data(pass_num: int) -> Dict[str, Any]:
     """
@@ -858,99 +659,57 @@ def _get_pdf_reference_data(pass_num: int) -> Dict[str, Any]:
         return {"components_kg": {}, "total_kg": 0, "guess_kg": 0, "margin_pct": 0}
 
 
-def print_ssto_results(results: Dict[str, Any], pass_num: int = 1, show_pdf_ref: bool = True):
-    """
-    Helper to format and print the SSTO analysis results.
-
-    Args:
-        results (Dict[str, Any]): The results dictionary from run_akin_ssto_example.
-        pass_num (int): The iteration number (1, 2, or 3) for PDF ref matching.
-        show_pdf_ref (bool): If True, prints the 'PDF Ref (kg)' column for comparison.
-    """
-
-    print("=" * 70)
-    print("🚀 AKIN SSTO ANALYSIS RESULTS")
-
-    # Get params from results
-    engine: EngineParams = results['engine_params']
-    stage: StageParams = results['stage_params']
-
-    # Title based on context
+def print_ssto_results(budget: StageMassBudget, pass_num: int = 1, show_pdf_ref: bool = True):
+    """Formats and prints the StageMassBudget."""
+    print("=" * 75)
+    print("🚀 AKIN SSTO ANALYSIS RESULTS (OOP Implementation)")
     if show_pdf_ref:
-        print(f"(Based on ENAE 791, Pass {pass_num}, Pages 3-34)")
-    else:
-        print(f"(Custom Run: {stage.tank_geometry} Tanks, dV={stage.delta_v_ms} m/s)")
-    print("=" * 70)
+        print(f"(Based on ENAE 791, Pass {pass_num})")
+    print("=" * 75)
 
-    print("\n--- Initial Vehicle Sizing (from Page 3) ---")
-    ic = results['initial_calcs']
-    print(f"  Gross Mass (M_o):         {ic['M_o_kg']:12,.1f} kg")
-    print(f"  Propellant Mass (M_p):    {ic['M_propellant_kg']:12,.1f} kg")
-    print(f"  Initial Inert Guess (M_i):{ic['M_i_initial_guess_kg']:12,.1f} kg")
-    print(f"  Payload Mass (M_l):       {ic['M_payload_kg']:12,.1f} kg")
-
-    print("\n--- Propulsion System (from Page 27-28) ---")
-    pr = results['propulsion']
-    print(f"  Num. Engines:             {stage.num_engines}")
-    print(f"  Total Thrust:             {pr['total_thrust_N'] / 1e6:12.2f} MN")
-    print(f"  Thrust per Engine:        {pr['thrust_per_engine_N'] / 1e3:12.1f} kN")
-    print(f"  Mass per Engine:          {pr['mass_per_engine_kg']:12.1f} kg")
+    print("\n--- Initial Vehicle Sizing ---")
+    print(f"  Gross Mass (M_o):         {budget['gross_mass_kg']:12,.1f} kg")
+    print(f"  Propellant Mass (M_p):    {budget['propellant_mass_kg']:12,.1f} kg")
+    print(f"  Initial Inert Guess (M_i):{budget['notes'].get('M_inert_initial_guess_kg', 0):12,.1f} kg")
+    implied_payload = budget['gross_mass_kg'] - budget['propellant_mass_kg'] - budget['total_inert_mass_kg']
+    print(f"  Payload Mass (implied):   {implied_payload:12,.1f} kg")
 
     print("\n--- Calculated Mass Budget ---")
-    mb = results['mass_budget']
-    components = mb['components_kg']
-
-    # Conditionally set headers
-    header = f"  {'Component':<18} | {'Calculated (kg)':>15}"
-    header_sep = f"  {'-' * 18: <18} | {'-' * 15:>15}"
+    header = f"  {'Component':<20} | {'Calculated (kg)':>15}"
+    sep = f"  {'-' * 20} | {'-' * 15}"
 
     pdf_data = {}
     if show_pdf_ref:
         pdf_data = _get_pdf_reference_data(pass_num)
         header += f" | {'PDF Ref (kg)':>12}"
-        header_sep += f" | {'-' * 12:>12}"
+        sep += f" | {'-' * 12}"
 
     print(header)
-    print(header_sep)
+    print(sep)
 
-    pdf_components = pdf_data.get("components_kg", {})
-
-    for name, mass in components.items():
-        line = f"  {name:<18} | {mass:15,.1f}"
+    pdf_comps = pdf_data.get("components_kg", {})
+    for name, mass in budget['components_kg'].items():
+        line = f"  {name:<20} | {mass:15,.1f}"
         if show_pdf_ref:
-            # We only add the PDF ref value if the flag is True
-            ref_val_str = f"{pdf_components.get(name, 0):,.0f}"
-            line += f" | {ref_val_str:>12}"
+            line += f" | {pdf_comps.get(name, 0):12,.0f}"
         print(line)
 
-    print(header_sep)
-
-    # Print totals conditionally
-    line_total = f"  {'Total Inert Mass':<18} | {mb['total_inert_mass_calculated_kg']:15,.1f}"
-    line_guess = f"  {'Initial Guess':<18} | {mb['total_inert_mass_initial_guess_kg']:15,.1f}"
-
+    print(sep)
+    line_total = f"  {'Total Inert Mass':<20} | {budget['total_inert_mass_kg']:15,.1f}"
     if show_pdf_ref:
-        line_total += f" | {pdf_data.get('total_kg', 0):>12,.0f}"
-        line_guess += f" | {pdf_data.get('guess_kg', 0):>12,.0f}"
-
+        line_total += f" | {pdf_data.get('total_kg', 0):12,.0f}"
     print(line_total)
-    print(line_guess)
 
     print("\n--- FINAL DESIGN MARGIN ---")
-    print(f"  Calculated Margin:   {mb['design_margin_percent']:15.2f} %")
+    margin = budget['notes'].get('design_margin_percent', 0.0)
+    print(f"  Calculated Margin:   {margin:15.2f} %")
     if show_pdf_ref:
         # Page 30, 32, 34
         print(f"  PDF Reference Margin: {pdf_data.get('margin_pct', 0.0):15.2f} %")
-    print("=" * 70)
+    print("=" * 75)
 
 
 if __name__ == "__main__":
-    """
-    This block allows the file to be run directly (e.g., `python models/akin_mers.py`)
-    to execute the SSTO 1st Pass analysis using the default parameters
-    from the PDF.
-    """
-
     print("Running SSTO Pass Example directly from akin_mers.py...")
 
     # 1. Get the specific config from the PDF (now dataclasses)
@@ -961,16 +720,9 @@ if __name__ == "__main__":
         engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_1st()
         pass_to_show = 1
     except AttributeError:
-        engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_1st()
-        pass_to_show = 1
+        print("Error: Could not load default parameters from vehicle_definitions.")
+        exit()
 
-    # 2. Run the analysis
-    try:
-        results = run_akin_ssto_example(engine_params, stage_params)
-
-        # 3. Print the formatted results
-        # Options: pass_num=1, 2, 3; show_pdf_ref = True to enable ssto_default_params
-        print_ssto_results(results, pass_num=pass_to_show, show_pdf_ref=True)
-
-    except Exception as e:
-        print(f"\nAn error occurred during the analysis: {e}")
+    model = AkinStageModel()
+    results_budget = model.calculate_full_stage_mass_budget(engine_params, stage_params)
+    print_ssto_results(results_budget, pass_num=pass_to_show, show_pdf_ref=True)
