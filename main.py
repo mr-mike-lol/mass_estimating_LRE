@@ -15,7 +15,7 @@ from typing import List, Tuple, Dict, Any
 from models.common_params import EngineParams, StageParams, CycleType
 
 from models.akin_mers import (
-    AkinPropulsionModel, run_akin_ssto_example, print_ssto_results
+    AkinPropulsionModel, AkinStageModel, print_ssto_results
 )
 from models.mota_schlingloff import MotaSchlingloffModel
 from models.zandbergen_engine import ZandbergenEngineModel, MassMethod
@@ -172,7 +172,14 @@ if __name__ == "__main__":
     print("\n--- Running Akin SSTO with Custom Params ---")
     custom_engine, custom_stage = default_rocket_params()
     try:
-        custom_results = run_akin_ssto_example(custom_engine, custom_stage)
+        # Instantiate the model
+        akin_model = AkinStageModel()
+
+        # Calculate the budget using the OOP method
+        custom_results = akin_model.calculate_full_stage_mass_budget(custom_engine, custom_stage)
+
+        # Print results using the existing helper in akin_mers
         print_ssto_results(custom_results, show_pdf_ref=False)
+
     except Exception as e:
         print(f"ERROR running Akin SSTO (Custom): {e}\n")
