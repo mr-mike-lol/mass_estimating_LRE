@@ -218,7 +218,10 @@ class BaseStageModel(ABC):
             return 0.0, 0.0
 
         mr = params.mixture_ratio
-        # Calculate component masses
+        if mr <= 0:
+            return 0.0, 0.0
+
+        # Mass fraction
         m_ox = propellant_mass_kg * (mr / (1.0 + mr))
         m_fuel = propellant_mass_kg * (1.0 / (1.0 + mr))
 
@@ -226,11 +229,10 @@ class BaseStageModel(ABC):
         if params.oxidizer_density <= 0 or params.fuel_density <= 0:
             return 0.0, 0.0
 
-        v_ox_net = m_ox / params.oxidizer_density
-        v_fuel_net = m_fuel / params.fuel_density
+        v_ox = (m_ox / params.oxidizer_density) * ullage_factor
+        v_fuel = (m_fuel / params.fuel_density) * ullage_factor
 
-        # Apply ullage factor
-        return (v_ox_net * ullage_factor, v_fuel_net * ullage_factor)
+        return v_ox, v_fuel
 
     # --- 2. ABSTRACT METHODS (The Implementation Details) ---
 
@@ -331,51 +333,52 @@ class BaseStageModel(ABC):
         Returns:
             StageMassBudget: The complete mass breakdown in kg.
         """
+        # Reset internal state if necessary (handled by concrete classes)
         components: Dict[str, float] = {}
         notes: Dict[str, Any] = {"model_name": self.model_name}
 
         try:
-            # --- Step 1: Initial Sizing ---
+            # 1. Sizing
             M_o, M_p, M_i_guess = self._calculate_initial_sizing(params, stage)
 
-            # Update the mutable StageParams object for subsequent steps
+            # Update StageParams for subsequent steps
             stage.vehicle_gross_mass_kg = M_o
             stage.propellant_mass_kg = M_p
-            stage.stage_inert_mass_kg = M_i_guess  # Temporary storage of guess
+            stage.stage_inert_mass_kg = M_i_guess
 
-            notes['M_o_guess_kg'] = M_o
-            notes['M_p_guess_kg'] = M_p
+            notes['M_o_calculated_kg'] = M_o
+            notes['M_p_calculated_kg'] = M_p
+            notes['M_inert_initial_guess_kg'] = M_i_guess
 
-            # --- Step 2: Component Estimation ---
-            # Concrete child classes implement these specific logic steps
+            # 2. Component Estimation
+            # Order matters: Tanks usually define geometry for Insulation/Structure
             components['Tanks'] = self._calculate_tank_mass(params, stage)
+            components['Insulation'] = self._calculate_insulation_mass(params, stage)
             components['Propulsion'] = self._calculate_propulsion_system_mass(params, stage)
             components['Structure'] = self._calculate_structural_mass(params, stage)
             components['Avionics/Power'] = self._calculate_avionics_and_power_mass(params, stage)
-            components['Insulation'] = self._calculate_insulation_mass(params, stage)
 
-            # --- Step 3: Summation & Summary ---
-            total_inert_calculated = sum(components.values())
+            # 3. Summation
+            total_inert = sum(components.values())
 
-            # Calculate margin: (Guess - Calculated) / Guess
+            # 4. Margin Calculation
+            margin_pct = 0.0
             if M_i_guess > 0:
-                margin = (M_i_guess - total_inert_calculated) / M_i_guess
-            else:
-                margin = 0.0
+                margin_pct = ((M_i_guess - total_inert) / M_i_guess) * 100.0
 
-            notes['design_margin_percent'] = margin * 100.0
+            notes['design_margin_percent'] = margin_pct
 
             return StageMassBudget(
                 gross_mass_kg=M_o,
                 propellant_mass_kg=M_p,
                 payload_mass_kg=stage.payload_mass_kg,
-                total_inert_mass_kg=total_inert_calculated,
+                total_inert_mass_kg=total_inert,
                 components_kg=components,
                 notes=notes
             )
 
         except Exception as e:
-            # Graceful error handling
+            # Fallback for errors
             return StageMassBudget(
                 gross_mass_kg=0.0,
                 propellant_mass_kg=0.0,

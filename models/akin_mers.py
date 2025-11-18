@@ -5,38 +5,38 @@ vehicle components, based on the "Mass Estimating Relations" lecture
 by Dr. David L. Akin (ENAE 791).
 
 Approach Overview:
-This module provides functions for "System-level Estimation"[cite: 667, 688].
+This module provides functions for "System-level Estimation".
 This approach breaks a vehicle down into its primary components
 (tanks, engines, structures, avionics, etc.) and estimates the
-mass of each using simple, empirical formulas[cite: 652].
+mass of each using simple, empirical formulas.
 
-These MERs are derived from historical data (regression fits) [cite: 701]
+These MERs are derived from historical data (regression fits)
 and are more detailed than a single vehicle-level inert fraction,
-but less complex than a full, discipline-oriented analysis [cite: 661-662].
+but less complex than a full, discipline-oriented analysis.
 They are intended for rapid, iterative design passes (e.g., the
-1st and 2nd pass analysis shown in the source document)[cite: 671, 1059].
+1st and 2nd pass analysis shown in the source document).
 
 Pros:
 +   **Fast & Iterative:** Allows for quick calculation of a full
     mass budget, enabling rapid trade studies and design loops
-    (e.g., changing vehicle diameter) [cite: 1059-1063, 1071-1086].
+    (e.g., changing vehicle diameter).
 +   **Component-Level Insight:** Provides a mass estimate for each
-    subsystem, offering more insight than a single "delta"[cite: 1056].
+    subsystem, offering more insight than a single "delta".
 +   **Historically Grounded:** The formulas are based on "prior art"
-    and historical data, giving a reasonable starting point[cite: 660, 701].
+    and historical data, giving a reasonable starting point.
 
 Cons:
 -   **Empirical, Not Physical:** The formulas (e.g., for tanks) are
     linear regressions and do not model the underlying physics
-    (like material choice, pressure, or safety factors) [cite: 701, 727-731].
+    (like material choice, pressure, or safety factors).
 -   **Brittle:** The MERs may be inaccurate if applied to vehicles
     or technologies far outside the original dataset (e.g., a
     modern, auto-claved composite tank might not follow the same
-    MER as the 1970s-era tanks in the data)[cite: 701].
+    MER as the 1970s-era tanks in the data).
 -   **Requires Iteration:** The first pass is just an estimate. The
     source document shows the 1st pass (spherical tanks) results
     in a negative mass margin, proving that iteration is
-    required[cite: 1056].
+    required.
 """
 
 import math
@@ -48,7 +48,7 @@ from models.common_params import (
 )
 import vehicle_definitions
 
-# --- Public Interface Class ---
+# --- Public Interface Class (Integration Logic) ---
 
 class AkinPropulsionModel(BaseEngineModel):
     """
@@ -56,7 +56,7 @@ class AkinPropulsionModel(BaseEngineModel):
 
     This model combines the individual MERs for the engine,
     thrust structure, and gimbals into a single "propulsion system"
-    mass, as done in the original main.py.
+    mass, allowing it to be plugged into the main optimization loop.
     """
 
     @property
@@ -119,7 +119,7 @@ class AkinPropulsionModel(BaseEngineModel):
         )
 
 
-# --- Individual MER Functions ---
+# --- Individual MER Functions (Calculation Logic) ---
 
 def estimate_engine_mass_mer(thrust_N: float, expansion_ratio: float) -> float:
     """
@@ -127,8 +127,8 @@ def estimate_engine_mass_mer(thrust_N: float, expansion_ratio: float) -> float:
     Returns only the total mass.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 25 [cite: 357-360].
-    [cite_start]Formula: M_Rocket_Engine(kg) = 7.81e-4*T(N) + 3.37e-5*T(N)*sqrt(Ae/At) + 59 [cite: 358, 360]
+    Mass Estimating Relations (Akin, ENAE 791), Page 25.
+    Formula: M_Rocket_Engine(kg) = 7.81e-4*T(N) + 3.37e-5*T(N)*sqrt(Ae/At) + 59
 
     Args:
         thrust_N (float): Engine thrust in Newtons.
@@ -137,11 +137,11 @@ def estimate_engine_mass_mer(thrust_N: float, expansion_ratio: float) -> float:
     Returns:
         float: Estimated engine-only mass in kg.
     """
-    # [cite_start]Term 1 from formula [cite: 358]
+    # Term 1 from formula
     term1 = 7.81e-4 * thrust_N
-    # [cite_start]Term 2 from formula [cite: 360]
+    # Term 2 from formula
     term2 = 3.37e-5 * thrust_N * (expansion_ratio ** 0.5)
-    # [cite_start]Term 3 from formula [cite: 360]
+    # Term 3 from formula
     term3 = 59.0
 
     total_mass = term1 + term2 + term3
@@ -154,8 +154,8 @@ def estimate_thrust_structure_mass(total_thrust_N: float) -> float:
     Estimates thrust structure mass based on total vehicle thrust.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 25 [cite: 362-363].
-    [cite_start]Formula: M_Thrust_Structure(kg) = 2.55e-4*T(N) [cite: 363]
+    Mass Estimating Relations (Akin, ENAE 791), Page 25.
+    Formula: M_Thrust_Structure(kg) = 2.55e-4*T(N)
 
     Args:
         total_thrust_N (float): Total thrust of all engines supported by the structure, in Newtons.
@@ -163,7 +163,7 @@ def estimate_thrust_structure_mass(total_thrust_N: float) -> float:
     Returns:
         float: Estimated thrust structure mass in kg.
     """
-    # [cite_start]Formula from source [cite: 363]
+    # Formula from source
     return 2.55e-4 * total_thrust_N
 
 
@@ -172,10 +172,10 @@ def estimate_propellant_tank_mass(volume_m3: float, propellant: Literal["LH2", "
     Estimates propellant tank mass based on propellant volume.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 6 [cite: 77-81].
-    [cite_start]Formulas derived from regression plot on Page 5 [cite: 51-73].
-    [cite_start]M_LH2_Tank(kg) = 9.09 * V_LH2(m^3) [cite: 79]
-    [cite_start]M_Other_Tank(kg) = 12.16 * V_prop(m^3) (for LOX, RP1) [cite: 81]
+    Mass Estimating Relations (Akin, ENAE 791), Page 6.
+    Formulas derived from regression plot on Page 5.
+    M_LH2_Tank(kg) = 9.09 * V_LH2(m^3)
+    M_Other_Tank(kg) = 12.16 * V_prop(m^3) (for LOX, RP1)
 
     Args:
         volume_m3 (float): Volume of the propellant in cubic meters.
@@ -185,11 +185,11 @@ def estimate_propellant_tank_mass(volume_m3: float, propellant: Literal["LH2", "
         float: Estimated tank mass in kg.
     """
     if propellant == "LH2":
-        # [cite_start]M_LH2_Tank(kg) = 9.09 * V_LH2(m^3) [cite: 79]
+        # M_LH2_Tank(kg) = 9.09 * V_LH2(m^3)
         return 9.09 * volume_m3
     else:
-        # [cite_start]M_Tank(kg) = 12.16 * V_prop(m^3) [cite: 81]
-        # [cite_start]This is used for LOX and RP-1 per the regression plot[cite: 51, 56, 71].
+        # M_Tank(kg) = 12.16 * V_prop(m^3)
+        # This is used for LOX and RP-1 per the regression plot.
         return 12.16 * volume_m3
 
 
@@ -200,11 +200,12 @@ def estimate_propellant_tank_mass_from_mass(propellant_mass_kg: float,
     This is the MER used in the SSTO example calcs.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 7 [cite: 86-92].
+    Mass Estimating Relations (Akin, ENAE 791), Page 7.
     Formulas:
-    [cite_start]M_LH2_Tank(kg) = 0.128 * M_LH2(kg) [cite: 88, 116]
-    [cite_start]M_LOX_Tank(kg) = 0.0107 * M_LOX(kg) [cite: 90, 106]
-    [cite_start]M_RP1_Tank(kg) = 0.0148 * M_RP1(kg) [cite: 92]
+    M_LH2_Tank(kg) = 0.128 * M_LH2(kg)
+    M_LOX_Tank(kg) = 0.0107 * M_LOX(kg)
+    M_RP1_Tank(kg) = 0.0148 * M_RP1(kg)
+    M_RP1_Tank(kg) = 0.0148 * M_RP1(kg) estimated
 
     Args:
         propellant_mass_kg (float): Mass of the propellant in kg.
@@ -214,13 +215,16 @@ def estimate_propellant_tank_mass_from_mass(propellant_mass_kg: float,
         float: Estimated tank mass in kg.
     """
     if propellant == "LH2":
-        # [cite_start]M_LH2_Tank(kg) = 0.128 * M_LH2(kg) [cite: 88]
+        # M_LH2_Tank(kg) = 0.128 * M_LH2(kg)
         return 0.128 * propellant_mass_kg
     elif propellant == "LOX":
-        # [cite_start]M_LOX_Tank(kg) = 0.0107 * M_LOX(kg) [cite: 90]
+        # M_LOX_Tank(kg) = 0.0107 * M_LOX(kg)
         return 0.0107 * propellant_mass_kg
     elif propellant == "RP1":
-        # [cite_start]M_RP1_Tank(kg) = 0.0148 * M_RP1(kg) [cite: 92]
+        # M_RP1_Tank(kg) = 0.0148 * M_RP1(kg)
+        return 0.0148 * propellant_mass_kg
+    elif propellant == "LCH4":
+        # M_RP1_Tank(kg) = 0.0148 * M_RP1(kg)
         return 0.0148 * propellant_mass_kg
     else:
         # Raise error other types, though not specified in this MER
@@ -232,10 +236,10 @@ def estimate_cryo_insulation_mass(tank_surface_area_m2: float, propellant: Liter
     Estimates cryogenic insulation mass based on tank surface area.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 8 [cite: 96-100].
+    Mass Estimating Relations (Akin, ENAE 791), Page 8.
     Formulas:
-    [cite_start]M_LH2_Insulation(kg) = 2.88 * A_tank(m^2) [cite: 97, 100, 120]
-    [cite_start]M_LOX_Insulation(kg) = 1.123 * A_tank(m^2) [cite: 99, 100, 110]
+    M_LH2_Insulation(kg) = 2.88 * A_tank(m^2)
+    M_LOX_Insulation(kg) = 1.123 * A_tank(m^2)
 
     Args:
         tank_surface_area_m2 (float): Surface area of the tank in square meters.
@@ -245,12 +249,12 @@ def estimate_cryo_insulation_mass(tank_surface_area_m2: float, propellant: Liter
         float: Estimated insulation mass in kg.
     """
     if propellant == "LH2":
-        # [cite_start]M_LH2_Insulation <kg> = 2.88 <kg/m^2> * A_tank [cite: 97, 100]
+        # M_LH2_Insulation <kg> = 2.88 <kg/m^2> * A_tank
         return 2.88 * tank_surface_area_m2
     elif propellant == "LOX":
-        # [cite_start]M_LOX_Insulation <kg> = 1.123 <kg/m^2> * A_tank [cite: 99, 100]
+        # M_LOX_Insulation <kg> = 1.123 <kg/m^2> * A_tank
         return 1.123 * tank_surface_area_m2
-    elif propellant == "Methane":
+    elif propellant == "LCH4":
         # estimated, needs double-check; cz it's cryogenic
         return 1.0 * tank_surface_area_m2
     else:
@@ -262,11 +266,11 @@ def estimate_pressurized_gas_tank_mass(volume_m3: float, tank_type: Literal["COP
     Estimates mass for high-pressure gas tanks (e.g., pressurant tanks).
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 13 [cite: 164-168].
-    [cite_start]Based on regression plot Page 12 [cite: 132-161].
+    Mass Estimating Relations (Akin, ENAE 791), Page 13.
+    Based on regression plot Page 12.
     Formulas:
-    [cite_start]M_COPV_Tank(kg) = 115.3 * V(m^3) + 3 [cite: 166]
-    [cite_start]M_Titanium_Tank(kg) = 299.8 * V(m^3) + 2 [cite: 168]
+    M_COPV_Tank(kg) = 115.3 * V(m^3) + 3
+    M_Titanium_Tank(kg) = 299.8 * V(m^3) + 2
 
     Args:
         volume_m3 (float): Volume of the contents in cubic meters.
@@ -276,10 +280,10 @@ def estimate_pressurized_gas_tank_mass(volume_m3: float, tank_type: Literal["COP
         float: Estimated tank mass in kg.
     """
     if tank_type == "COPV":
-        # [cite_start]M_COPV Tank(kg) = 115.3 * V_contents(m^3) + 3 [cite: 166]
+        # M_COPV Tank(kg) = 115.3 * V_contents(m^3) + 3
         return 115.3 * volume_m3 + 3.0
     elif tank_type == "Titanium":
-        # [cite_start]M_Titanium_Tank(kg) = 299.8 * V_contents(m^3) + 2 [cite: 168]
+        # M_Titanium_Tank(kg) = 299.8 * V_contents(m^3) + 2
         return 299.8 * volume_m3 + 2.0
     else:
         # Default to COPV if type is unknown
@@ -291,12 +295,12 @@ def estimate_small_liquid_tank_mass(volume_m3: float, tank_type: Literal["Bare",
     Estimates mass for smaller storable liquid tanks.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 15 [cite: 212-218].
-    [cite_start]Based on regression plot Page 14 [cite: 172-210].
+    Mass Estimating Relations (Akin, ENAE 791), Page 15.
+    Based on regression plot Page 14.
     Formulas:
-    [cite_start]M_Bare_Tank(kg) = 27.34 * V(m^3) + 2 [cite: 214]
-    [cite_start]M_PMD_Tank(kg) = 34.69 * V(m^3) + 3 [cite: 216]
-    [cite_start]M_Diaphragm_Tank(kg) = 71.17 * V(m^3) + 3 [cite: 218]
+    M_Bare_Tank(kg) = 27.34 * V(m^3) + 2
+    M_PMD_Tank(kg) = 34.69 * V(m^3) + 3
+    M_Diaphragm_Tank(kg) = 71.17 * V(m^3) + 3
 
     Args:
         volume_m3 (float): Volume of the contents in cubic meters.
@@ -306,13 +310,13 @@ def estimate_small_liquid_tank_mass(volume_m3: float, tank_type: Literal["Bare",
         float: Estimated tank mass in kg.
     """
     if tank_type == "Bare":
-        # [cite_start]M_Bare Tank(kg) = 27.34 * V_contents(m^3) + 2 [cite: 214]
+        # M_Bare Tank(kg) = 27.34 * V_contents(m^3) + 2
         return 27.34 * volume_m3 + 2.0
     elif tank_type == "PMD":
-        # [cite_start]M_PMD Tank(kg) = 34.69 * V_contents(m^3) + 3 [cite: 216]
+        # M_PMD Tank(kg) = 34.69 * V_contents(m^3) + 3
         return 34.69 * volume_m3 + 3.0
     elif tank_type == "Diaphragm":
-        # [cite_start]M_Diaphragm Tank(kg) = 71.17 * V_contents(m^3) + 3 [cite: 218]
+        # M_Diaphragm Tank(kg) = 71.17 * V_contents(m^3) + 3
         return 71.17 * volume_m3 + 3.0
     else:
         # Default to PMD as a reasonable intermediate
@@ -324,8 +328,8 @@ def estimate_fairing_mass(fairing_surface_area_m2: float) -> float:
     Estimates fairing/shroud mass based on surface area.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 20 [cite: 279-280].
-    [cite_start]Formula: M_fairing(kg) = 4.95 * (A_fairing(m^2))^1.15 [cite: 280]
+    Mass Estimating Relations (Akin, ENAE 791), Page 20.
+    Formula: M_fairing(kg) = 4.95 * (A_fairing(m^2))^1.15
 
     Args:
         fairing_surface_area_m2 (float): Surface area of the fairing in square meters.
@@ -335,7 +339,7 @@ def estimate_fairing_mass(fairing_surface_area_m2: float) -> float:
     """
     if fairing_surface_area_m2 <= 0:
         return 0.0
-    # [cite_start]Formula from source [cite: 280]
+    # Formula from source
     return 4.95 * (fairing_surface_area_m2 ** 1.15)
 
 
@@ -344,8 +348,8 @@ def estimate_avionics_mass(vehicle_gross_mass_kg: float) -> float:
     Estimates avionics mass based on vehicle gross mass.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 20[cite: 281, 284].
-    [cite_start]Formula: M_avionics(kg) = 10 * (M_o(kg))^0.361 [cite: 284]
+    Mass Estimating Relations (Akin, ENAE 791), Page 20.
+    Formula: M_avionics(kg) = 10 * (M_o(kg))^0.361
 
     Args:
         vehicle_gross_mass_kg (float): Vehicle gross mass (M_o) in kg.
@@ -355,7 +359,7 @@ def estimate_avionics_mass(vehicle_gross_mass_kg: float) -> float:
     """
     if vehicle_gross_mass_kg <= 0:
         return 0.0
-    # [cite_start]Formula from source [cite: 284]
+    # Formula from source
     return 10.0 * (vehicle_gross_mass_kg ** 0.361)
 
 
@@ -364,8 +368,8 @@ def estimate_wiring_mass(vehicle_gross_mass_kg: float, vehicle_length_m: float) 
     Estimates wiring mass based on vehicle gross mass and length.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 20[cite: 283, 285].
-    [cite_start]Formula: M_wiring(kg) = 1.058 * sqrt(M_o(kg)) * l^0.25 [cite: 285]
+    Mass Estimating Relations (Akin, ENAE 791), Page 20.
+    Formula: M_wiring(kg) = 1.058 * sqrt(M_o(kg)) * l^0.25
 
     Args:
         vehicle_gross_mass_kg (float): Vehicle gross mass (M_o) in kg.
@@ -376,7 +380,7 @@ def estimate_wiring_mass(vehicle_gross_mass_kg: float, vehicle_length_m: float) 
     """
     if vehicle_gross_mass_kg <= 0 or vehicle_length_m <= 0:
         return 0.0
-    # [cite_start]Formula from source [cite: 285]
+    # Formula from source
     return 1.058 * (vehicle_gross_mass_kg ** 0.5) * (vehicle_length_m ** 0.25)
 
 
@@ -385,8 +389,8 @@ def estimate_srm_casing_mass(propellant_mass_kg: float) -> float:
     Estimates Solid Rocket Motor (SRM) casing mass from propellant mass.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 25[cite: 359, 361].
-    [cite_start]Formula: M_Motor_Casing = 0.135 * M_propellants [cite: 361]
+    Mass Estimating Relations (Akin, ENAE 791), Page 25.
+    Formula: M_Motor_Casing = 0.135 * M_propellants
 
     Args:
         propellant_mass_kg (float): Mass of the solid propellant in kg.
@@ -394,7 +398,7 @@ def estimate_srm_casing_mass(propellant_mass_kg: float) -> float:
     Returns:
         float: Estimated motor casing mass in kg.
     """
-    # [cite_start]Formula from source [cite: 361]
+    # Formula from source
     return 0.135 * propellant_mass_kg
 
 
@@ -403,8 +407,8 @@ def estimate_gimbal_mass(engine_thrust_N: float, chamber_pressure_Pa: float) -> 
     Estimates gimbal mass for a single engine.
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 26 [cite: 368-369].
-    [cite_start]Formula: M_Gimbals(kg) = 237.8 * [T(N) / P_c(Pa)]^0.9375 [cite: 369]
+    Mass Estimating Relations (Akin, ENAE 791), Page 26.
+    Formula: M_Gimbals(kg) = 237.8 * [T(N) / P_c(Pa)]^0.9375
 
     Args:
         engine_thrust_N (float): Thrust of a single engine in Newtons.
@@ -416,9 +420,9 @@ def estimate_gimbal_mass(engine_thrust_N: float, chamber_pressure_Pa: float) -> 
     if chamber_pressure_Pa <= 0:
         raise ValueError("Chamber pressure must be > 0 for gimbal calculation")
 
-    # [cite_start]Ratio T(N) / P_0(Pa) from formula [cite: 369]
+    # Ratio T(N) / P_0(Pa) from formula
     ratio = engine_thrust_N / chamber_pressure_Pa
-    # [cite_start]Full formula from source [cite: 369]
+    # Full formula from source
     return 237.8 * (ratio ** 0.9375)
 
 
@@ -427,8 +431,8 @@ def estimate_gimbal_torque(engine_thrust_N: float, chamber_pressure_Pa: float) -
     Estimates gimbal torque for a single engine. (Note: Not a mass relation).
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 26 [cite: 370-371].
-    [cite_start]Formula: Tau_Gimbals(N*m) = 990,000 * [T(N) / P_c(Pa)]^1.25 [cite: 371]
+    Mass Estimating Relations (Akin, ENAE 791), Page 26.
+    Formula: Tau_Gimbals(N*m) = 990,000 * [T(N) / P_c(Pa)]^1.25
 
     Args:
         engine_thrust_N (float): Thrust of a single engine in Newtons.
@@ -440,9 +444,9 @@ def estimate_gimbal_torque(engine_thrust_N: float, chamber_pressure_Pa: float) -
     if chamber_pressure_Pa <= 0:
         raise ValueError("Chamber pressure must be > 0 for gimbal torque calculation")
 
-    # [cite_start]Ratio T(N) / P_0(Pa) from formula [cite: 371]
+    # Ratio T(N) / P_0(Pa) from formula
     ratio = engine_thrust_N / chamber_pressure_Pa
-    # [cite_start]Full formula from source [cite: 371]
+    # Full formula from source
     return 990_000 * (ratio ** 1.25)
 
 
@@ -526,7 +530,7 @@ def calculate_cone_area(radius: float, height: float) -> float:
     A = pi * r * sqrt(r^2 + h^2)
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 290].
+    Mass Estimating Relations (Akin, ENAE 791), Page 21.
 
     Args:
         radius (float): Base radius of the cone (r).
@@ -546,7 +550,7 @@ def calculate_cylinder_area(radius: float, height: float) -> float:
     A = 2 * pi * r * h
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 295].
+    Mass Estimating Relations (Akin, ENAE 791), Page 21.
 
     Args:
         radius (float): Radius of the cylinder (r).
@@ -566,7 +570,7 @@ def calculate_frustum_area(radius1: float, radius2: float, height: float) -> flo
     A = pi * (r1 + r2) * sqrt((r1 - r2)^2 + h^2)
 
     Reference:
-    [cite_start]Mass Estimating Relations (Akin, ENAE 791), Page 21[cite: 292].
+    Mass Estimating Relations (Akin, ENAE 791), Page 21.
 
     Args:
         radius1 (float): Radius of the first base (r1).
@@ -952,7 +956,13 @@ if __name__ == "__main__":
     # 1. Get the specific config from the PDF (now dataclasses)
     # Options: get_akin_ssto_default_params_1st, get_akin_ssto_default_params_2nd, get_akin_ssto_default_params_3rd
     # default_rocket_params
-    engine_params, stage_params = vehicle_definitions.default_rocket_params()
+    # We try to use the 2nd pass params if available (for better comparison), otherwise default
+    try:
+        engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_1st()
+        pass_to_show = 1
+    except AttributeError:
+        engine_params, stage_params = vehicle_definitions.get_akin_ssto_default_params_1st()
+        pass_to_show = 1
 
     # 2. Run the analysis
     try:
@@ -960,7 +970,7 @@ if __name__ == "__main__":
 
         # 3. Print the formatted results
         # Options: pass_num=1, 2, 3; show_pdf_ref = True to enable ssto_default_params
-        print_ssto_results(results, pass_num=2, show_pdf_ref=False)
+        print_ssto_results(results, pass_num=pass_to_show, show_pdf_ref=True)
 
     except Exception as e:
         print(f"\nAn error occurred during the analysis: {e}")
