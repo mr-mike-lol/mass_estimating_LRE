@@ -775,6 +775,161 @@ def print_ssto_results(budget: StageMassBudget, pass_num: int = 1, show_pdf_ref:
     print("=" * 75)
 
 
+def check_physics_tsiolkovsky(budget: StageMassBudget, engine: EngineParams) -> Dict[str, float]:
+    """
+    Performs a standard physics check using the Tsiolkovsky Rocket Equation
+    based on the FINAL calculated masses.
+
+    Equation: dV = Isp * g0 * ln(m_initial / m_final)
+
+    Args:
+        budget: The calculated mass budget.
+        engine: The engine parameters used (for Isp).
+
+    Returns:
+        Dict with calculated physics values.
+    """
+    m_initial = budget['gross_mass_kg']
+    # Final mass = Gross - Propellant (i.e., Inert + Payload)
+    m_final = m_initial - budget['propellant_mass_kg']
+
+    if m_final <= 0 or m_initial <= 0:
+        return {"actual_dv": 0.0, "mass_ratio": 0.0}
+
+    mass_ratio = m_initial / m_final
+
+    # Calculate actual achieved Delta V
+    # Note: We use vacuum Isp here. For a first stage, losses are usually
+    # accounted for by increasing the target Delta V requirement.
+    actual_dv = engine.isp_vac_s * G0 * math.log(mass_ratio)
+
+    return {
+        "m_initial_kg": m_initial,
+        "m_final_kg": m_final,
+        "mass_ratio": mass_ratio,
+        "actual_dv_ms": actual_dv,
+        "isp_used": engine.isp_vac_s
+    }
+
+
+# --- Updated Orchestrators ---
+
+def calculate_two_stage_mission(
+        s1_engine: EngineParams,
+        s1_params: StageParams,
+        s2_engine: EngineParams,
+        s2_params: StageParams
+) -> Dict[str, Any]:
+    """
+    Calculates a two-stage mission and performs physics verification.
+    """
+    model = AkinStageModel()
+
+    print("\n" + "!" * 60)
+    print("!!! STARTING 2-STAGE CALCULATION LOOP !!!")
+    print("!" * 60 + "\n")
+
+    # --- 1. Calculate Stage 2 (Upper) ---
+    print(">>> Calculating Stage 2 (Upper Stage)...")
+    budget_s2 = model.calculate_full_stage_mass_budget(s2_engine, s2_params)
+
+    # Verify S2 Physics
+    check_s2 = check_physics_tsiolkovsky(budget_s2, s2_engine)
+    s2_gross_mass = budget_s2['gross_mass_kg']
+    print(f"   -> Stage 2 Gross Mass: {s2_gross_mass:,.1f} kg")
+    print(f"   -> S2 Actual dV:       {check_s2['actual_dv_ms']:.1f} m/s (Target: {s2_params.delta_v_ms:.1f})")
+
+    # --- 2. Pass Load to Stage 1 ---
+    # The Gross Mass of S2 becomes the Payload of S1
+    s1_params.payload_mass_kg = s2_gross_mass
+    print(f">>> Passing Load to Stage 1: Payload is now {s1_params.payload_mass_kg:,.1f} kg")
+
+    # --- 3. Calculate Stage 1 (Booster) ---
+    print(">>> Calculating Stage 1 (Booster)...")
+    budget_s1 = model.calculate_full_stage_mass_budget(s1_engine, s1_params)
+
+    # Verify S1 Physics
+    check_s1 = check_physics_tsiolkovsky(budget_s1, s1_engine)
+    s1_gross_mass = budget_s1['gross_mass_kg']
+    print(f"   -> Stage 1 Gross Mass: {s1_gross_mass:,.1f} kg")
+    print(f"   -> S1 Actual dV:       {check_s1['actual_dv_ms']:.1f} m/s (Target: {s1_params.delta_v_ms:.1f})")
+
+    # --- 4. Vehicle Summary ---
+    total_glom = s1_gross_mass
+    final_payload = s2_params.payload_mass_kg
+
+    # Sum of ACTUAL achievable dV, not the target dV
+    total_actual_dv = check_s1['actual_dv_ms'] + check_s2['actual_dv_ms']
+    target_dv = s1_params.delta_v_ms + s2_params.delta_v_ms
+
+    results = {
+        "vehicle_summary": {
+            "GLOM_kg": total_glom,
+            "Final_Payload_kg": final_payload,
+            "Target_Total_dV_ms": target_dv,
+            "Actual_Total_dV_ms": total_actual_dv,
+            "Payload_Fraction_pct": (final_payload / total_glom * 100) if total_glom > 0 else 0,
+            "S1_Performance": check_s1,
+            "S2_Performance": check_s2
+        },
+        "stage2_budget": budget_s2,
+        "stage1_budget": budget_s1
+    }
+
+    return results
+
+
+def print_two_stage_report(results: Dict[str, Any]):
+    """
+    Detailed report including Tsiolkovsky verification and Component Breakdown.
+    """
+    summary = results['vehicle_summary']
+    s1_perf = summary['S1_Performance']
+    s2_perf = summary['S2_Performance']
+
+    print("\n" + "=" * 75)
+    print("🚀 TWO-STAGE VEHICLE CONFIGURATION REPORT (With Physics Verification)")
+    print("=" * 75)
+
+    print(f"{'METRIC':<30} | {'VALUE':<20} | {'UNIT'}")
+    print("-" * 75)
+    print(f"{'GLOM (Start Mass)':<30} | {summary['GLOM_kg']:12,.1f}         | kg")
+    print(f"{'Final Payload':<30} | {summary['Final_Payload_kg']:12,.1f}         | kg")
+    print(f"{'Payload Fraction':<30} | {summary['Payload_Fraction_pct']:12.3f}         | %")
+    print("-" * 75)
+    print(f"{'Target Total dV':<30} | {summary['Target_Total_dV_ms']:12,.1f}         | m/s")
+    print(f"{'Calculated Actual dV':<30} | {summary['Actual_Total_dV_ms']:12,.1f}         | m/s")
+
+    # Delta V Balance Check
+    diff = summary['Actual_Total_dV_ms'] - summary['Target_Total_dV_ms']
+    status = "EXCESS" if diff >= -0.01 else "DEFICIT"  # Small float tolerance
+    print(f"{'dV Balance':<30} | {diff:+12.1f} ({status})  | m/s")
+
+    print("\n--- PHYSICS VERIFICATION (Tsiolkovsky Check) ---")
+    print(f"{'Stage':<10} | {'Mass Ratio':<10} | {'Isp (s)':<8} | {'Target dV':<10} | {'Actual dV':<10} | {'Diff %'}")
+    print("-" * 85)
+
+    # Stage 2 Row
+    s2_diff_pct = ((s2_perf['actual_dv_ms'] - 4500.0) / 4500.0) * 100
+    print(
+        f"{'Stage 2':<10} | {s2_perf['mass_ratio']:10.2f} | {s2_perf['isp_used']:8.1f} | {'~4500':<10} | {s2_perf['actual_dv_ms']:10.1f} | {s2_diff_pct:+6.2f}%")
+
+    # Stage 1 Row
+    s1_diff_pct = ((s1_perf['actual_dv_ms'] - 4500.0) / 4500.0) * 100
+    print(
+        f"{'Stage 1':<10} | {s1_perf['mass_ratio']:10.2f} | {s1_perf['isp_used']:8.1f} | {'~4500':<10} | {s1_perf['actual_dv_ms']:10.1f} | {s1_diff_pct:+6.2f}%")
+
+    print("\n--- DETAILED COMPONENT BREAKDOWN ---")
+
+    print("\n>>> STAGE 2 (UPPER) DETAIL <<<")
+    print_ssto_results(results['stage2_budget'], pass_num=2, show_pdf_ref=False)
+
+    print("\n>>> STAGE 1 (BOOSTER) DETAIL <<<")
+    print_ssto_results(results['stage1_budget'], pass_num=2, show_pdf_ref=False)
+
+    print("=" * 75 + "\n")
+
+
 if __name__ == "__main__":
     print("Running SSTO Pass Example directly from akin_mers.py...")
 
@@ -792,3 +947,22 @@ if __name__ == "__main__":
     model = AkinStageModel()
     results_budget = model.calculate_full_stage_mass_budget(engine_params, stage_params)
     print_ssto_results(results_budget, pass_num=pass_to_show, show_pdf_ref=True)
+
+    try:
+        # 1. Get the specific (4-elements tuple) config
+        two_stage_config = vehicle_definitions.get_two_stage_example_params()
+
+        # 2. unpack
+        s1_engine = two_stage_config.stage1_engine
+        s1_params = two_stage_config.stage1_params
+        s2_engine = two_stage_config.stage2_engine
+        s2_params = two_stage_config.stage2_params
+    except AttributeError:
+        print("Error: Could not load default parameters from vehicle_definitions.")
+        exit()
+
+    # --- 3. Run Calculation ---
+    results = calculate_two_stage_mission(s1_engine, s1_params, s2_engine, s2_params)
+
+    # --- 4. Print Report ---
+    print_two_stage_report(results)

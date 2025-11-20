@@ -15,7 +15,8 @@ from typing import List, Tuple, Dict, Any
 from models.common_params import EngineParams, StageParams, CycleType
 
 from models.akin_mers import (
-    AkinPropulsionModel, AkinStageModel, print_ssto_results
+    AkinPropulsionModel, AkinStageModel, print_ssto_results,
+    calculate_two_stage_mission, print_two_stage_report
 )
 from models.mota_schlingloff import MotaSchlingloffModel
 from models.zandbergen_engine import ZandbergenEngineModel, MassMethod
@@ -28,7 +29,7 @@ from models.base import BaseEngineModel, BaseStageModel
 # Import the engine/stage definitions
 from vehicle_definitions import (
     get_le5_engine, get_ssme_engine, get_rl10a_engine,
-    get_rd120_engine, default_rocket_params
+    get_rd120_engine, default_rocket_params, get_two_stage_example_params
 )
 
 
@@ -183,3 +184,28 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"ERROR running Akin SSTO (Custom): {e}\n")
+
+    # --- 5. Run 2-Stage Rocket Analysis (NEW) ---
+    print("||||" + "=" * 70 + "||||")
+    print("||||   PART 4: TWO-STAGE ROCKET ANALYSIS (Chained Models)")
+    print("||||" + "=" * 70 + "||||")
+
+
+    try:
+        # 1. Get the specific (4-elements tuple) config
+        two_stage_config = get_two_stage_example_params()
+
+        # 2. unpack
+        s1_engine = two_stage_config.stage1_engine
+        s1_params = two_stage_config.stage1_params
+        s2_engine = two_stage_config.stage2_engine
+        s2_params = two_stage_config.stage2_params
+    except AttributeError:
+        print("Error: Could not load default parameters from vehicle_definitions.")
+        exit()
+
+    # --- 3. Run Calculation ---
+    results = calculate_two_stage_mission(s1_engine, s1_params, s2_engine, s2_params)
+
+    # --- 4. Print Report ---
+    print_two_stage_report(results)

@@ -1,7 +1,7 @@
 # models/common_params.py
 
 from dataclasses import dataclass
-from typing import Literal, Optional, Dict
+from typing import Literal, Optional, Dict, NamedTuple
 
 # --- Propellant Density Constants (kg/m^3) ---
 # Using values from Akin (ENAE 791), Page 4
@@ -196,3 +196,10 @@ class SolidRocketMotorParams:
 
         # Total Impulse = Isp * m_prop * g0
         return self.total_impulse_Ns / (self.propellant_mass_kg * G0)
+
+class TwoStageConfig(NamedTuple):
+    """Контейнер для хранения настроек двух ступеней сразу"""
+    stage1_engine: EngineParams
+    stage1_params: StageParams
+    stage2_engine: EngineParams
+    stage2_params: StageParams

@@ -1,6 +1,6 @@
 # vehicle_definitions.py
 
-from models.common_params import EngineParams, StageParams
+from models.common_params import EngineParams, StageParams, TwoStageConfig
 from typing import Dict, Any, Tuple
 from models.common_params import (
     DENSITY_RP1, DENSITY_LH2, DENSITY_LOX, DENSITY_LCH4, G0
@@ -317,3 +317,81 @@ def default_rocket_params() -> Tuple[EngineParams, StageParams]:
     stage.engine = engine
 
     return engine, stage
+
+
+def get_two_stage_example_params() -> TwoStageConfig:
+    """
+    Определяет параметры для 2-ступенчатой ракеты.
+    Сценарий: Вывод 5000 кг на высокую орбиту.
+
+    Ступень 2 (Верхняя): LOX/LH2 (высокий Isp), цель dV = 4500 м/с
+    Ступень 1 (Бустер): LOX/RP1 (высокая тяга), цель dV = 4500 м/с
+    """
+
+    # --- Ступень 2 (Верхняя) ---
+    # Двигатель типа RL-10
+    s2_engine = EngineParams(
+        thrust_vac_N=50_000,  # ~110 kN
+        isp_vac_s=365.0,  # Высокий удельный импульс
+        chamber_pressure_Pa=8e6,
+        expansion_ratio=80.0,
+        mixture_ratio=3.4,
+        propellant_type="LOX/LCH4",
+        cycle_type="GG",
+        oxidizer_density=DENSITY_LOX,
+        fuel_density=DENSITY_LCH4,
+        safety_factor=1.1  # - Safety factors
+    )
+
+    s2_params = StageParams(
+        engine=s2_engine,  # Передаем объект двигателя
+        propellant_mass_kg=0.0,  # Будет рассчитано позже
+        vehicle_gross_mass_kg=0.0,  # Будет рассчитано позже
+        vehicle_length_m=0.0,  # Будет рассчитано позже
+        stage_inert_mass_kg=0.0,  # Будет рассчитано позже
+        payload_mass_kg=500.0,  # ФИНАЛЬНАЯ полезная нагрузка (спутник)
+        delta_v_ms=4500.0,  # dV второй ступени
+        initial_twr=0.8,  # Для второй ступени TWR может быть < 1 (в вакууме)
+        num_engines=1,
+        vehicle_diameter_m=2.0,  # Диаметр 3м
+        tank_geometry="Cylinder",
+        payload_fairing_height_m=0.0,  # Обтекатель сбрасывается на 1 ступени (упрощение)
+        intertank_fairing_height_m=1.0,
+        aft_fairing_height_m=0.5,
+        initial_delta=0.12
+    )
+
+    # --- Ступень 1 (Нижняя) ---
+    # Двигатель типа RD-180/RD-191
+    s1_engine = EngineParams(
+        thrust_vac_N=940_000,  # ~4 MN (мощный бустер)
+        isp_vac_s=330.0,
+        chamber_pressure_Pa=10e6,  # Высокое давление (Staged Combustion)
+        expansion_ratio=35.0,
+        mixture_ratio=3.4,
+        propellant_type="LOX/LCH4",
+        cycle_type="GG",
+        oxidizer_density=DENSITY_LOX,
+        fuel_density=DENSITY_LCH4,
+        safety_factor=1.1
+    )
+
+    s1_params = StageParams(
+        engine=s1_engine,  # Передаем объект двигателя
+        propellant_mass_kg=0.0,  # Будет рассчитано позже
+        vehicle_gross_mass_kg=0.0,  # Будет рассчитано позже
+        vehicle_length_m=0.0,  # Будет рассчитано позже
+        stage_inert_mass_kg=0.0,
+        payload_mass_kg=0.0,  # <--- ВАЖНО: Это будет перезаписано массой 2-й ступени!
+        delta_v_ms=4500.0,  # dV первой ступени
+        initial_twr=1.3,  # TWR > 1 для старта с Земли
+        num_engines=4,
+        vehicle_diameter_m=2,  # Бустер шире
+        tank_geometry="Cylinder",
+        payload_fairing_height_m=6.0,  # Обтекатель на первой ступени закрывает нагрузку
+        intertank_fairing_height_m=1.5,
+        aft_fairing_height_m=1.5,
+        initial_delta=0.09
+    )
+
+    return TwoStageConfig(s1_engine, s1_params, s2_engine, s2_params)
