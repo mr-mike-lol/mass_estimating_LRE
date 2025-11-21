@@ -401,10 +401,10 @@ class AkinStageModel(BaseStageModel):
 
         # 9. Compilation
         components = {
-            "LOX Tank": m_ox_tank,
-            "LH2 Tank": m_fuel_tank,
-            "LOX Insulation": m_ox_ins,
-            "LH2 Insulation": m_fuel_ins,
+            f"{ox_type} Tank": m_ox_tank,
+            f"{fuel_type} Tank": m_fuel_tank,
+            f"{ox_type} Insulation": m_ox_ins,
+            f"{fuel_type} Insulation": m_fuel_ins,
             "Payload Fairing": m_payload_fairing,
             "Intertank Fairing": m_intertank,
             "Aft Fairing": m_aft_skirt,
@@ -427,7 +427,10 @@ class AkinStageModel(BaseStageModel):
                 "M_inert_initial_guess_kg": m_inert_guess,
                 "design_margin_percent": margin * 100.0,
                 "lambda_payload": lambda_payload,
-                "vehicle_length_m": geo.total_length
+                "vehicle_length_m": geo.total_length,
+
+                "h_lox_m": geo.h_lox,
+                "h_fuel_m": geo.h_fuel
             }
         )
 
@@ -580,8 +583,10 @@ class AkinStageModel(BaseStageModel):
             return 0.128 * mass_kg
         elif prop_type == "LOX":
             return 0.0107 * mass_kg
+        elif prop_type == "RP1":
+            return 0.0148 * mass_kg
         else:
-            return 0.0148 * mass_kg  # RP1/LCH4
+            return 0.02 * mass_kg  # LCH4 estimated
 
     @staticmethod
     def _estimate_insulation_mer(area_m2: float, prop_type: str) -> float:
@@ -599,8 +604,9 @@ class AkinStageModel(BaseStageModel):
         elif prop_type == "LOX":
             return 1.123 * area_m2
         elif prop_type == "LCH4":
+            # Methane is cryogenic (111K vs LOX 90K).
             # estimated, needs double-check; cz it's cryogenic
-            return 1.0 * area_m2
+            return 1.115 * area_m2
         return 0.0
 
     @staticmethod
@@ -765,6 +771,17 @@ def print_ssto_results(budget: StageMassBudget, pass_num: int = 1, show_pdf_ref:
     if show_pdf_ref:
         line_total += f" | {pdf_data.get('total_kg', 0):12,.0f}"
     print(line_total)
+
+    print("\n--- GEOMETRY DETAIL ---")
+    length = budget['notes'].get('vehicle_length_m', 0.0)
+
+    h_lox = budget['notes'].get('h_lox_m', 0.0)
+    h_fuel = budget['notes'].get('h_fuel_m', 0.0)
+
+    print(f"  Total Stage Length:  {length:15.2f} m")
+    print(f"  -> LOX Tank Height:  {h_lox:15.2f} m")
+    print(f"  -> Fuel Tank Height: {h_fuel:15.2f} m")
+    print(f"  -> Fairings/Struct:  {length - h_lox - h_fuel:15.2f} m")
 
     print("\n--- FINAL DESIGN MARGIN ---")
     margin = budget['notes'].get('design_margin_percent', 0.0)

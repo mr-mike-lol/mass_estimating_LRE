@@ -301,7 +301,7 @@ def default_rocket_params() -> Tuple[EngineParams, StageParams]:
 
         # --- Geometry Inputs (Akin) ---
         tank_geometry="Cylinder",
-        vehicle_diameter_m=2.0,
+        vehicle_diameter_m=1.6,
         payload_fairing_height_m=7.0,
         intertank_fairing_height_m=2,
         aft_fairing_height_m=3,
@@ -321,53 +321,61 @@ def default_rocket_params() -> Tuple[EngineParams, StageParams]:
 
 def get_two_stage_example_params() -> TwoStageConfig:
     """
-    Определяет параметры для 2-ступенчатой ракеты.
-    Сценарий: Вывод 5000 кг на высокую орбиту.
-
-    Ступень 2 (Верхняя): LOX/LH2 (высокий Isp), цель dV = 4500 м/с
-    Ступень 1 (Бустер): LOX/RP1 (высокая тяга), цель dV = 4500 м/с
+        Defines parameters for a 2-stage LOX/LCH4 vehicle (2m diameter).
+        Goal: 500kg to LEO (~9000 m/s dV total).
+        Total Length approx 20m (S1 ~13m, S2 ~7m).
     """
 
-    # --- Ступень 2 (Верхняя) ---
-    # Двигатель типа RL-10
+    # --- Stage 2 (Upper) ---
+    # Engine: Vacuum optimized Methalox
     s2_engine = EngineParams(
-        thrust_vac_N=50_000,  # ~110 kN
-        isp_vac_s=365.0,  # Высокий удельный импульс
-        chamber_pressure_Pa=8e6,
+        thrust_vac_N=30_000,  # ~30 kN (Small upper stage engine)
+        isp_vac_s=355.0,  # Realistic for Methalox Vacuum (e.g. Raptor Vac is ~378, but small engines are less efficient)
+        chamber_pressure_Pa=6e6,
         expansion_ratio=80.0,
-        mixture_ratio=3.4,
+        mixture_ratio=3.4,  # Standard Methalox
         propellant_type="LOX/LCH4",
-        cycle_type="GG",
+        cycle_type="GG",  # Simpler cycle for small stage
         oxidizer_density=DENSITY_LOX,
         fuel_density=DENSITY_LCH4,
-        safety_factor=1.1  # - Safety factors
+        safety_factor=1.1  # Safety factors
     )
 
     s2_params = StageParams(
-        engine=s2_engine,  # Передаем объект двигателя
-        propellant_mass_kg=0.0,  # Будет рассчитано позже
-        vehicle_gross_mass_kg=0.0,  # Будет рассчитано позже
-        vehicle_length_m=0.0,  # Будет рассчитано позже
-        stage_inert_mass_kg=0.0,  # Будет рассчитано позже
-        payload_mass_kg=500.0,  # ФИНАЛЬНАЯ полезная нагрузка (спутник)
-        delta_v_ms=4500.0,  # dV второй ступени
-        initial_twr=0.8,  # Для второй ступени TWR может быть < 1 (в вакууме)
+        engine=s2_engine,
+        propellant_mass_kg=0.0,
+        vehicle_gross_mass_kg=0.0,
+        vehicle_length_m=0.0,
+        stage_inert_mass_kg=0.0,
+
+        payload_mass_kg=500.0,  # Payload
+        delta_v_ms=4650.0,  # Upper stage dV
+
+        initial_twr=0.7,  # Vacuum stage can be < 1
         num_engines=1,
-        vehicle_diameter_m=2.0,  # Диаметр 3м
+
+        # Geometry
+        vehicle_diameter_m=1.8,
         tank_geometry="Cylinder",
-        payload_fairing_height_m=0.0,  # Обтекатель сбрасывается на 1 ступени (упрощение)
-        intertank_fairing_height_m=1.0,
-        aft_fairing_height_m=0.5,
-        initial_delta=0.12
+
+        # Length Tuning (~6-7m total)
+        # Fairing covers payload, so it adds length at top
+        payload_fairing_height_m=3.5,
+        intertank_fairing_height_m=0.1,  # Common bulkhead or short intertank
+        aft_fairing_height_m=2,  # Engine section
+
+        # Sizing Guess
+        # Small stages have bad mass fractions. 0.16 = 16% inert mass.
+        initial_delta=0.148
     )
 
-    # --- Ступень 1 (Нижняя) ---
-    # Двигатель типа RD-180/RD-191
+    # --- Stage 1 ---
+    # Engine: Sea-level optimized Methalox
     s1_engine = EngineParams(
-        thrust_vac_N=940_000,  # ~4 MN (мощный бустер)
-        isp_vac_s=330.0,
-        chamber_pressure_Pa=10e6,  # Высокое давление (Staged Combustion)
-        expansion_ratio=35.0,
+        thrust_vac_N=350_000,  # ~350 kN per engine (x4 = 1.4MN)
+        isp_vac_s=325.0,  # Lower for SL engine
+        chamber_pressure_Pa=10e6,
+        expansion_ratio=30.0,
         mixture_ratio=3.4,
         propellant_type="LOX/LCH4",
         cycle_type="GG",
@@ -377,21 +385,30 @@ def get_two_stage_example_params() -> TwoStageConfig:
     )
 
     s1_params = StageParams(
-        engine=s1_engine,  # Передаем объект двигателя
-        propellant_mass_kg=0.0,  # Будет рассчитано позже
-        vehicle_gross_mass_kg=0.0,  # Будет рассчитано позже
-        vehicle_length_m=0.0,  # Будет рассчитано позже
+        engine=s1_engine,
+        propellant_mass_kg=0.0,
+        vehicle_gross_mass_kg=0.0,
+        vehicle_length_m=0.0,
         stage_inert_mass_kg=0.0,
-        payload_mass_kg=0.0,  # <--- ВАЖНО: Это будет перезаписано массой 2-й ступени!
-        delta_v_ms=4500.0,  # dV первой ступени
-        initial_twr=1.3,  # TWR > 1 для старта с Земли
-        num_engines=4,
-        vehicle_diameter_m=2,  # Бустер шире
+        payload_mass_kg=0.0,  # Overwritten by S2 mass
+        delta_v_ms=4650.0,  # Booster dV
+
+        initial_twr=1.35,  # Liftoff TWR
+        num_engines=4,  # Cluster of 4
+
+        # Geometry
+        vehicle_diameter_m=1.8,  # Same diameter
         tank_geometry="Cylinder",
-        payload_fairing_height_m=6.0,  # Обтекатель на первой ступени закрывает нагрузку
-        intertank_fairing_height_m=1.5,
-        aft_fairing_height_m=1.5,
-        initial_delta=0.09
+
+        # Length Tuning (~13-14m)
+        # Payload fairing is on S2, so here it is 0 or just adapter
+        payload_fairing_height_m=0.5,
+        intertank_fairing_height_m=0.1,  # Between tanks
+        aft_fairing_height_m=2,  # Thrust structure/Legs area
+
+        # Sizing Guess
+        # Boosters are more efficient. 0.08 = 8% inert mass.
+        initial_delta=0.0675
     )
 
     return TwoStageConfig(s1_engine, s1_params, s2_engine, s2_params)
